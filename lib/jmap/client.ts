@@ -880,7 +880,7 @@ export class JMAPClient implements IJMAPClient {
         ["Quota/get", {
           accountId: this.accountId,
         }, "0"]
-      ]);
+      ], ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail", "urn:ietf:params:jmap:quota"]);
 
       if (response.methodResponses?.[0]?.[0] === "Quota/get") {
         const quotas = (response.methodResponses[0][1].list || []) as JMAPQuota[];
