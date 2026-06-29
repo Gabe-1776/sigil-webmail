@@ -91,7 +91,8 @@ function StorageQuotaCircle({ quota, usagePercent }: { quota: { used: number; to
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open, updatePosition]);
 
-  const free = quota.total - quota.used;
+  const hasLimit = quota.total > 0;
+  const free = hasLimit ? quota.total - quota.used : null;
   const strokeColor = usagePercent > 90
     ? "stroke-destructive"
     : usagePercent > 70
@@ -108,16 +109,21 @@ function StorageQuotaCircle({ quota, usagePercent }: { quota: { used: number; to
       >
         <svg className="w-8 h-8 -rotate-90" viewBox="0 0 32 32">
           <circle cx="16" cy="16" r="12" fill="none" className="stroke-muted" strokeWidth="3" />
-          <circle
-            cx="16" cy="16" r="12" fill="none"
-            className={cn(strokeColor)}
-            strokeWidth="3" strokeLinecap="round"
-            strokeDasharray={`${(usagePercent / 100) * 75.4} 75.4`}
-            style={{ transition: "stroke-dasharray 0.3s" }}
-          />
+          {hasLimit && (
+            <circle
+              cx="16" cy="16" r="12" fill="none"
+              className={cn(strokeColor)}
+              strokeWidth="3" strokeLinecap="round"
+              strokeDasharray={`${(usagePercent / 100) * 75.4} 75.4`}
+              style={{ transition: "stroke-dasharray 0.3s" }}
+            />
+          )}
+          {!hasLimit && (
+            <circle cx="16" cy="16" r="12" fill="none" className="stroke-success" strokeWidth="3" strokeLinecap="round" strokeDasharray="20 75.4" />
+          )}
         </svg>
         <span className="absolute text-[7px] font-bold text-muted-foreground tabular-nums">
-          {Math.round(usagePercent)}%
+          {hasLimit ? `${Math.round(usagePercent)}%` : "∞"}
         </span>
       </button>
 
@@ -129,31 +135,37 @@ function StorageQuotaCircle({ quota, usagePercent }: { quota: { used: number; to
               <span className="text-muted-foreground">{t("storage_used")}</span>
               <span className="font-medium tabular-nums">{formatFileSize(quota.used)}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">{t("storage_free")}</span>
-              <span className="font-medium tabular-nums">{formatFileSize(free)}</span>
-            </div>
+            {hasLimit && free !== null && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">{t("storage_free")}</span>
+                <span className="font-medium tabular-nums">{formatFileSize(free)}</span>
+              </div>
+            )}
             <div className="flex justify-between">
               <span className="text-muted-foreground">{t("storage_total")}</span>
-              <span className="font-medium tabular-nums">{formatFileSize(quota.total)}</span>
+              <span className="font-medium tabular-nums">{hasLimit ? formatFileSize(quota.total) : "Unlimited"}</span>
             </div>
           </div>
-          <div className="mt-2.5 w-full bg-muted rounded-full h-1.5">
-            <div
-              className={cn(
-                "h-1.5 rounded-full transition-all",
-                usagePercent > 90
-                  ? "bg-destructive"
-                  : usagePercent > 70
-                    ? "bg-warning"
-                    : "bg-success"
-              )}
-              style={{ width: `${usagePercent}%` }}
-            />
-          </div>
-          <p className="text-[10px] text-muted-foreground mt-1 tabular-nums">
-            {Math.round(usagePercent)}% {t("storage_used").toLowerCase()}
-          </p>
+          {hasLimit && (
+            <>
+              <div className="mt-2.5 w-full bg-muted rounded-full h-1.5">
+                <div
+                  className={cn(
+                    "h-1.5 rounded-full transition-all",
+                    usagePercent > 90
+                      ? "bg-destructive"
+                      : usagePercent > 70
+                        ? "bg-warning"
+                        : "bg-success"
+                  )}
+                  style={{ width: `${usagePercent}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-1 tabular-nums">
+                {Math.round(usagePercent)}% {t("storage_used").toLowerCase()}
+              </p>
+            </>
+          )}
         </div>,
         document.body
       )}
@@ -434,6 +446,7 @@ export function NavigationRail({
   }
 
   const quotaUsagePercent = quota && quota.total > 0 ? Math.min((quota.used / quota.total) * 100, 100) : 0;
+  const showQuota = quota && (quota.total > 0 || quota.used > 0);
 
   return (
     <div
@@ -634,9 +647,9 @@ export function NavigationRail({
           </>
         )}
 
-        {quota && quota.total > 0 && (
+        {showQuota && (
           <div data-tour="storage-quota">
-            <StorageQuotaCircle quota={quota} usagePercent={quotaUsagePercent} />
+            <StorageQuotaCircle quota={quota!} usagePercent={quotaUsagePercent} />
           </div>
         )}
 
