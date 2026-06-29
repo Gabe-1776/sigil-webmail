@@ -884,16 +884,7 @@ export class JMAPClient implements IJMAPClient {
 
       if (response.methodResponses?.[0]?.[0] === "Quota/get") {
         const quotas = (response.methodResponses[0][1].list || []) as JMAPQuota[];
-        // Stalwart returns a single synthetic quota with resourceType "octets"
-        // and scope "account" (not "mail"). Accept either shape so the storage
-        // indicator works against real Stalwart servers as well as mock servers.
-        const mailQuota = quotas.find(
-          (q) =>
-            q.resourceType === "octets" ||
-            q.scope === "account" ||
-            q.resourceType === "mail" ||
-            q.scope === "mail"
-        );
+        const mailQuota = quotas.find((q) => q.resourceType === "mail" || q.scope === "mail");
 
         if (mailQuota) {
           return {
