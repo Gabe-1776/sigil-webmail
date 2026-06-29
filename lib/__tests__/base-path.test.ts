@@ -17,9 +17,9 @@ async function loadNav(basePath?: string) {
 }
 
 // The fallback values from CONFIG_ENV_MAP that ship in the box.
-const DEFAULT_FAVICON = '/branding/Bulwark_Favicon.svg';
-const DEFAULT_LOGIN_LOGO_LIGHT = '/branding/Bulwark_Logo_Color.svg';
-const DEFAULT_LOGIN_LOGO_DARK = '/branding/Bulwark_Logo_White.svg';
+const DEFAULT_FAVICON = '/branding/sigil-favicon.svg';
+const DEFAULT_LOGIN_LOGO_LIGHT = '/branding/sigil-logo.svg';
+const DEFAULT_LOGIN_LOGO_DARK = '/branding/sigil-logo.svg';
 
 afterEach(() => {
   delete process.env.NEXT_PUBLIC_BASE_PATH;
@@ -38,14 +38,14 @@ describe('withBasePath — asset-URL fallbacks under a subpath', () => {
 
   it('prefixes the built-in favicon and login-logo defaults', async () => {
     const { withBasePath } = await loadNav('/webmail');
-    expect(withBasePath(DEFAULT_FAVICON)).toBe('/webmail/branding/Bulwark_Favicon.svg');
-    expect(withBasePath(DEFAULT_LOGIN_LOGO_LIGHT)).toBe('/webmail/branding/Bulwark_Logo_Color.svg');
-    expect(withBasePath(DEFAULT_LOGIN_LOGO_DARK)).toBe('/webmail/branding/Bulwark_Logo_White.svg');
+    expect(withBasePath(DEFAULT_FAVICON)).toBe('/webmail/branding/sigil-favicon.svg');
+    expect(withBasePath(DEFAULT_LOGIN_LOGO_LIGHT)).toBe('/webmail/branding/sigil-logo.svg');
+    expect(withBasePath(DEFAULT_LOGIN_LOGO_DARK)).toBe('/webmail/branding/sigil-logo.svg');
   });
 
   it('is idempotent for an already-prefixed value (no double prefix)', async () => {
     const { withBasePath } = await loadNav('/webmail');
-    expect(withBasePath('/webmail/branding/Bulwark_Favicon.svg')).toBe('/webmail/branding/Bulwark_Favicon.svg');
+    expect(withBasePath('/webmail/branding/sigil-favicon.svg')).toBe('/webmail/branding/sigil-favicon.svg');
     expect(withBasePath('/webmail')).toBe('/webmail');
   });
 
@@ -62,7 +62,7 @@ describe('withBasePath — asset-URL fallbacks under a subpath', () => {
   it('strips a trailing slash on the configured base path', async () => {
     const { withBasePath, getPathPrefix } = await loadNav('/webmail/');
     expect(getPathPrefix()).toBe('/webmail');
-    expect(withBasePath(DEFAULT_FAVICON)).toBe('/webmail/branding/Bulwark_Favicon.svg');
+    expect(withBasePath(DEFAULT_FAVICON)).toBe('/webmail/branding/sigil-favicon.svg');
   });
 
   it('getPathPrefix reports the static base path on the server (no window needed)', async () => {

@@ -22,7 +22,7 @@ const SAMPLE_FILES: SampleFile[] = [
   { name: "Photos", isFolder: true, size: 0, modified: "2026-03-14" },
   { name: "report.pdf", isFolder: false, size: 245000, modified: "2026-03-15" },
   { name: "notes.md", isFolder: false, size: 1200, modified: "2026-03-12" },
-  { name: "vacation.jpg", isFolder: false, size: 3400000, modified: "2026-03-08", thumbnailUrl: "/branding/Bulwark_Logo_Color.png" },
+  { name: "vacation.jpg", isFolder: false, size: 3400000, modified: "2026-03-08", thumbnailUrl: "/branding/sigil-logo.svg" },
   { name: "song.mp3", isFolder: false, size: 5200000, modified: "2026-03-01" },
   { name: ".config", isFolder: false, size: 340, modified: "2026-02-20", hidden: true },
 ];
