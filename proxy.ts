@@ -40,6 +40,9 @@ export async function proxy(request: NextRequest) {
       // Public read endpoint - serves wizard-uploaded branding assets so
       // image previews work during the wizard. No auth on the GET route.
       pathname.startsWith("/api/admin/branding/") ||
+      // Mailbox creation confirm page — publicly accessible (the user may not
+      // have a mailbox yet; that's the whole point of the flow).
+      /\/confirm$/.test(pathname) ||
       /\.[^/]+$/.test(pathname);
 
     if (!allowed) {
@@ -86,7 +89,10 @@ export async function proxy(request: NextRequest) {
     ? `'self' 'nonce-${nonce}' 'unsafe-eval'`
     : `'self' 'nonce-${nonce}'`;
 
-  const connectSrc = isDev ? `'self' http: https: ws: wss:` : `'self' https:`;
+  // Sigil: `wss:` is needed for the XPR wallet's mobile/desktop login relay
+  // (cb.anchor.link websocket). Per CSP spec `https:` should cover `wss:`,
+  // but browser behavior is inconsistent — be explicit.
+  const connectSrc = isDev ? `'self' http: https: ws: wss:` : `'self' https: wss:`;
 
   const frameAncestors = isSandboxPath
     ? `'self'`
@@ -95,10 +101,17 @@ export async function proxy(request: NextRequest) {
   // Plugins may declare iframe origins they need (e.g. for embedded video).
   // Each origin is validated at install time and re-validated here.
   const pluginFrameOrigins = await getEnabledPluginFrameOrigins();
-  const frameSrc =
-    pluginFrameOrigins.length > 0
-      ? `frame-src 'self' blob: ${pluginFrameOrigins.join(" ")}`
-      : `frame-src 'self' blob:`;
+  // Sigil: the XPR wallet's mobile/desktop login flow frames the WebAuth
+  // wallet UI and the anchor-link relay. Without these, only the
+  // browser-extension wallet works (it bypasses the page's network stack,
+  // which is why it was the only option that worked before this).
+  const walletFrameOrigins = [
+    "https://webauth.com",
+    "https://*.webauth.com",
+    "https://cb.anchor.link",
+  ];
+  const allFrameOrigins = [...walletFrameOrigins, ...pluginFrameOrigins];
+  const frameSrc = `frame-src 'self' blob: ${allFrameOrigins.join(" ")}`;
 
   const csp = [
     `default-src 'self'`,
@@ -163,9 +176,11 @@ export async function proxy(request: NextRequest) {
 
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   response.headers.set("X-XSS-Protection", "0");
+  // Sigil: publickey-credentials-* delegated to webauth.com so its biometric
+  // (WebAuthn/passkey) login works when embedded — the rest stay denied.
   response.headers.set(
     "Permissions-Policy",
-    "camera=(), microphone=(), geolocation=(), payment=()"
+    'camera=(), microphone=(), geolocation=(), payment=(), publickey-credentials-get=(self "https://webauth.com"), publickey-credentials-create=(self "https://webauth.com")'
   );
   response.headers.set("Content-Security-Policy", csp);
 

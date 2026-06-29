@@ -61,7 +61,13 @@
       "token_exchange_failed": "Nie udało się dokończyć uwierzytelniania. Spróbuj ponownie.",
       "access_denied": "Odmowa dostępu. Skontaktuj się z administratorem.",
       "back_to_login": "Powrót do logowania"
-    }
+    },
+    "xpr_connecting_wallet": "Connecting wallet…",
+    "xpr_minting_credential": "Setting up your mailbox access…",
+    "xpr_requesting_challenge": "Requesting login challenge…",
+    "xpr_signing": "Connected as {actor} — sign in your wallet (this costs nothing)…",
+    "xpr_signing_in": "Signing in…",
+    "xpr_verifying": "Verifying…"
   },
   "sidebar": {
     "close": "Zamknij",

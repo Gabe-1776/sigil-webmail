@@ -187,6 +187,12 @@ export default function LoginPage() {
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
   const [oauthMetadata, setOauthMetadata] = useState<OAuthMetadata | null>(null);
   const [oauthDiscoveryDone, setOauthDiscoveryDone] = useState(false);
+  const XPR_AUTH_SERVICE_URL =
+    process.env.NEXT_PUBLIC_XPR_AUTH_SERVICE_URL || "https://auth.mailsigil.pro";
+  const [xprLoading, setXprLoading] = useState(false);
+  const [xprStatus, setXprStatus] = useState("");
+  const [xprError, setXprError] = useState("");
+  const sigilGrantToken = searchParams.get("sigil_grant_token") ?? "";
   const [oauthLoading, setOauthLoading] = useState(false);
   const [demoLoading, setDemoLoading] = useState(false);
 
@@ -203,6 +209,39 @@ export default function LoginPage() {
   useEffect(() => {
     initializeTheme();
   }, [initializeTheme]);
+
+  // Sigil grant auto-login: dashboard passes a one-time token so the user
+  // never has to handle credentials manually when opening a shared mailbox.
+  useEffect(() => {
+    if (!sigilGrantToken || !serverUrl || xprLoading) return;
+    let cancelled = false;
+    (async () => {
+      setXprLoading(true);
+      setXprStatus("Opening shared mailbox…");
+      try {
+        const res = await fetch(`${XPR_AUTH_SERVICE_URL}/api/grants/exchange-token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: sigilGrantToken }),
+        }).then(r => r.json());
+        if (cancelled) return;
+        if (!res.ok) throw new Error(res.error || "Token exchange failed");
+        const success = await login(serverUrl, res.username, res.password);
+        if (cancelled) return;
+        if (success) {
+          router.push("/");
+        } else {
+          setXprError("Auto-login failed — the grant may have been revoked.");
+        }
+      } catch (err) {
+        if (!cancelled) setXprError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!cancelled) setXprLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sigilGrantToken, serverUrl]);
 
   useEffect(() => {
     if (serverUrl) {
@@ -625,6 +664,115 @@ export default function LoginPage() {
     window.location.href = authUrl.toString();
   };
 
+  // Sigil: XPR wallet login. No password ever exists on this path — the
+  // wallet signature itself is the credential. We don't use Bulwark's OAuth
+  // flow here deliberately: that would hand Stalwart our own minted token
+  // as a bearer credential, which Stalwart's JMAP still rejects (unresolved
+  // upstream issue). Instead we mint a Phase-4 app-password (the path that's
+  // actually proven working) and feed it into Bulwark's existing basic-auth
+  // `login()` — same session/cookie code as the password form, just never
+  // typed by a human.
+  const XPR_CHAIN_ID = "384da888112027f0321850a169f737c33e53b388aad48b5adace4bab97f437e0";
+  const XPR_ENDPOINTS = ["https://proton.eosusa.io", "https://proton.protonuk.io"];
+
+  const handleXprLogin = async () => {
+    setXprError("");
+    setXprLoading(true);
+    try {
+      setXprStatus(t("xpr_connecting_wallet") || "Connecting wallet…");
+      const ProtonWebSDK = (await import("@proton/web-sdk")).default;
+      await import("@proton/link");
+
+      const { session, loginResult } = await ProtonWebSDK({
+        linkOptions: { chainId: XPR_CHAIN_ID, endpoints: XPR_ENDPOINTS },
+        transportOptions: { requestAccount: "mailsigil" },
+        selectorOptions: { appName: appName || "Sigil Mail", enabledWalletTypes: ["webauth", "anchor", "proton"] },
+      });
+      if (!session) throw new Error("Wallet connection was cancelled");
+
+      const actor = session.auth.actor;
+      const permission = session.auth.permission;
+
+      // Verify identity and get a backend access token. Preferred path: the
+      // identity proof ConnectWallet already produced (Proton mobile / Anchor)
+      // — one "Authorize" tap, no transaction prompt. Fallback: the webauth.com
+      // desktop popup returns no proof, so sign a never-broadcast transfer.
+      let verifyRes: { ok?: boolean; error?: string; accessToken?: string };
+      if (loginResult?.proof) {
+        setXprStatus(t("xpr_verifying") || "Verifying…");
+        verifyRes = await fetch(`${XPR_AUTH_SERVICE_URL}/api/auth/verify-proof`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ proof: loginResult.proof.toString() }),
+        }).then((r) => r.json());
+      } else {
+        setXprStatus(t("xpr_requesting_challenge") || "Requesting login challenge…");
+        const { challengeId, message } = await fetch(`${XPR_AUTH_SERVICE_URL}/api/auth/nonce`, {
+          method: "POST",
+        }).then((r) => r.json());
+        const { Serializer } = await import("@greymass/eosio");
+
+        setXprStatus(t("xpr_signing") || `Connected as ${actor} — sign in your wallet (this costs nothing)…`);
+        const nonce = message.match(/Nonce: (\S+)/)?.[1];
+        const result = await session.transact(
+          {
+            actions: [
+              {
+                account: "eosio.token",
+                name: "transfer",
+                authorization: [{ actor, permission }],
+                // from===to is rejected client-side even with broadcast:false,
+                // so send to the always-present `eosio` system account. Never
+                // broadcast; nothing here ever touches the chain.
+                data: { from: actor, to: "eosio", quantity: "0.0001 XPR", memo: nonce },
+              },
+            ],
+          },
+          { broadcast: false },
+        );
+        const serializedTransaction = Serializer.encode({ object: result.transaction }).hexString;
+
+        setXprStatus(t("xpr_verifying") || "Verifying signature…");
+        verifyRes = await fetch(`${XPR_AUTH_SERVICE_URL}/api/auth/verify`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ challengeId, actor, permission, signatures: result.signatures, serializedTransaction }),
+        }).then((r) => r.json());
+      }
+
+      if (!verifyRes.ok) {
+        throw new Error(verifyRes.error || "Wallet signature verification failed");
+      }
+
+      setXprStatus(t("xpr_minting_credential") || "Setting up your mailbox access…");
+      const appPasswordRes = await fetch(`${XPR_AUTH_SERVICE_URL}/api/auth/app-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${verifyRes.accessToken}` },
+        body: JSON.stringify({ description: "Bulwark webmail session" }),
+      }).then((r) => r.json());
+
+      if (!appPasswordRes.username || !appPasswordRes.password) {
+        throw new Error(appPasswordRes.error || "Could not provision mailbox access");
+      }
+
+      setXprStatus(t("xpr_signing_in") || "Signing in…");
+      const success = await login(serverUrl, appPasswordRes.username, appPasswordRes.password);
+      if (success) {
+        if (verifyRes.accessToken) {
+          localStorage.setItem("sigil_auth_token", verifyRes.accessToken);
+          localStorage.setItem("sigil_actor", appPasswordRes.username?.split("@")[0] ?? "");
+        }
+        router.push("/");
+      } else {
+        throw new Error("Mailbox login failed after wallet verification");
+      }
+    } catch (err) {
+      setXprError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setXprLoading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -1029,260 +1177,40 @@ export default function LoginPage() {
               </div>
             ) : (
               /* Login Form */
-              <form onSubmit={handleSubmit} className="space-y-5">
-                <fieldset disabled={isLoading} className="space-y-4">
-                  {/* Server picker (when admin has configured a server list) */}
-                  {hasServerList && jmapServers.length > 1 && (
-                    <div className="space-y-1.5">
-                      <label htmlFor="jmap-server-select" className="block text-sm font-medium text-foreground">
-                        {t("jmap_server_label")}
-                      </label>
-                      <select
-                        id="jmap-server-select"
-                        value={selectedServer?.id ?? ""}
-                        onChange={(e) => setSelectedServerId(e.target.value)}
-                        disabled={domainAutoLocked}
-                        className="h-11 w-full px-3.5 bg-muted/40 border border-border/60 rounded-xl focus:bg-background focus:border-primary/50 transition-all duration-200 text-sm text-foreground disabled:opacity-70 disabled:cursor-not-allowed"
-                      >
-                        {jmapServers.map((s) => (
-                          <option key={s.id} value={s.id}>{s.label}</option>
-                        ))}
-                      </select>
-                      {domainAutoLocked && (
-                        <p className="text-[11px] text-muted-foreground leading-snug">
-                          {t("jmap_server_auto_picked")}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                  {/* JMAP Endpoint field (only when no server list and custom endpoints are allowed) */}
-                  {!hasServerList && allowCustomJmapEndpoint && (
-                    <div className="space-y-1.5">
-                      <label htmlFor="jmap-endpoint" className="block text-sm font-medium text-foreground">
-                        {t("jmap_endpoint_label")}
-                      </label>
-                      <Input
-                        id="jmap-endpoint"
-                        type="url"
-                        value={jmapEndpoint}
-                        onChange={(e) => setJmapEndpoint(e.target.value)}
-                        className="h-11 px-3.5 bg-muted/40 border-border/60 rounded-xl focus:bg-background focus:border-primary/50 transition-all duration-200"
-                        placeholder={t("jmap_endpoint_placeholder")}
-                        required
-                      />
-                      <p className="text-[11px] text-muted-foreground leading-snug">
-                        {t("jmap_endpoint_cors_hint")}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Username field */}
-                  <div className="space-y-1.5">
-                    <label htmlFor="username" className="block text-sm font-medium text-foreground">
-                      {t("username_label")}
-                    </label>
-                    <div className="relative">
-                      <Input
-                        ref={inputRef}
-                        id="username"
-                        type="text"
-                        value={formData.username}
-                        onChange={handleUsernameChange}
-                        onFocus={handleUsernameFocus}
-                        onKeyDown={handleKeyDown}
-                        className="h-11 px-3.5 bg-muted/40 border-border/60 rounded-xl focus:bg-background focus:border-primary/50 transition-all duration-200"
-                        placeholder={t("username_placeholder")}
-                        required
-                        autoComplete="off"
-                        data-form-type="other"
-                        data-lpignore="true"
-                        autoFocus
-                      />
-
-                      {/* Custom autocomplete dropdown */}
-                      {showSuggestions && filteredSuggestions.length > 0 && (
-                        <div
-                          ref={suggestionsRef}
-                          className="absolute top-full mt-1.5 w-full bg-background border border-border rounded-xl shadow-lg z-50 overflow-hidden"
-                        >
-                          {filteredSuggestions.map((username, index) => (
-                            <div
-                              key={username}
-                              className={cn(
-                                "px-3.5 py-2.5 flex items-center justify-between hover:bg-muted cursor-pointer transition-colors",
-                                index === selectedSuggestionIndex && "bg-muted"
-                              )}
-                              onClick={() => selectSuggestion(username)}
-                            >
-                              <span className="text-sm text-foreground">{username}</span>
-                              <button
-                                type="button"
-                                onClick={(e) => removeUsername(username, e)}
-                                className="p-1 hover:bg-secondary rounded-md transition-colors"
-                                title={t("remove_from_history")}
-                              >
-                                <X className="w-3 h-3 text-muted-foreground" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Password field */}
-                  <div className="space-y-1.5">
-                    <label htmlFor="password" className="block text-sm font-medium text-foreground">
-                      {t("password_label")}
-                    </label>
-                    <div className="relative">
-                      <Input
-                        id="password"
-                        type={showPassword ? "text" : "password"}
-                        value={formData.password}
-                        onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                        className="h-11 px-3.5 pr-11 bg-muted/40 border-border/60 rounded-xl focus:bg-background focus:border-primary/50 transition-all duration-200"
-                        placeholder={t("password_placeholder")}
-                        required
-                        autoComplete="current-password"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-md text-muted-foreground hover:text-foreground transition-colors"
-                        aria-label={showPassword ? t("hide_password") : t("show_password")}
-                        tabIndex={-1}
-                      >
-                        {showPassword ? (
-                          <EyeOff className="w-4 h-4" />
-                        ) : (
-                          <Eye className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 2FA toggle / field */}
-                  {!showTotpField ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowTotpField(true);
-                        setTimeout(() => totpInputRef.current?.focus(), 50);
-                      }}
-                      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      <Shield className="w-3.5 h-3.5" />
-                      {t("totp_toggle")}
-                    </button>
-                  ) : (
-                    <div className="space-y-1.5">
-                      <label htmlFor="totp" className="block text-sm font-medium text-foreground">
-                        {t("totp_label")}
-                      </label>
-                      <Input
-                        ref={totpInputRef}
-                        id="totp"
-                        type="text"
-                        inputMode="numeric"
-                        maxLength={6}
-                        value={totpCode}
-                        onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ''))}
-                        className={cn(
-                          "h-11 px-3.5 bg-muted/40 border-border/60 rounded-xl focus:bg-background focus:border-primary/50 transition-all duration-200 text-center font-mono tracking-widest",
-                          error === 'totp_required' && "border-primary ring-2 ring-primary/30"
-                        )}
-                        placeholder={t("totp_placeholder")}
-                        autoComplete="one-time-code"
-                        aria-label={t("totp_label")}
-                      />
-                    </div>
-                  )}
-
-                  {/* Remember me */}
-                  {rememberMeEnabled && (
-                    <label className="flex items-center gap-2.5 cursor-pointer group select-none pt-1">
-                      <span className="relative flex items-center justify-center">
-                        <input
-                          type="checkbox"
-                          checked={rememberMe}
-                          onChange={(e) => setRememberMe(e.target.checked)}
-                          className="peer sr-only"
-                        />
-                        <span className="flex items-center justify-center w-[18px] h-[18px] rounded-[5px] border border-border/80 bg-muted/40 peer-checked:bg-primary peer-checked:border-primary peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background transition-all duration-200">
-                          {rememberMe && (
-                            <svg className="w-3 h-3 text-primary-foreground" viewBox="0 0 12 12" fill="none">
-                              <path d="M2 6L5 9L10 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                          )}
-                        </span>
-                      </span>
-                      <span className="text-sm text-muted-foreground group-hover:text-foreground transition-colors">
-                        {t("remember_me")}
-                      </span>
-                    </label>
-                  )}
-                </fieldset>
-
-                <Button
-                  type="submit"
-                  className="w-full h-11 font-medium text-[15px] bg-primary hover:bg-primary/90 transition-all duration-200 rounded-xl shadow-md shadow-primary/15 hover:shadow-lg hover:shadow-primary/20"
-                  disabled={isLoading}
-                >
-                  {isLoading ? (
-                    <div className="flex items-center gap-2">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      {t("signing_in")}
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <LogIn className="w-4 h-4" />
-                      {t("sign_in")}
-                    </div>
-                  )}
-                </Button>
-
-                {oauthMetadata && (
-                  <>
-                    <div className="relative my-2">
-                      <div className="absolute inset-0 flex items-center">
-                        <span className="w-full border-t border-border/60" />
+              <div className="space-y-5">
+                {/* Sigil: XPR wallet login — the primary, intended path.
+                    No email, no password — your wallet signature is your
+                    credential. The form below still works as a fallback
+                    (e.g. operator/admin accounts), per the project's
+                    "always ship a manual fallback" rule, not because XPR
+                    login is optional for normal users. */}
+                <div className="space-y-3">
+                  <Button
+                    type="button"
+                    className="w-full h-11 font-medium text-[15px] bg-primary hover:bg-primary/90 transition-all duration-200 rounded-xl shadow-md shadow-primary/15 hover:shadow-lg hover:shadow-primary/20"
+                    onClick={handleXprLogin}
+                    disabled={xprLoading}
+                  >
+                    {xprLoading ? (
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        {xprStatus || "Signing in…"}
                       </div>
-                      <div className="relative flex justify-center text-xs uppercase">
-                        <span className="bg-background/80 px-3 text-muted-foreground">{t("or")}</span>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <Shield className="w-4 h-4" />
+                        Sign in with XPR Wallet
                       </div>
+                    )}
+                  </Button>
+                  {xprError && (
+                    <div className="p-3 rounded-xl border border-destructive/20 bg-destructive/5 flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0" />
+                      <p className="text-sm text-destructive leading-relaxed">{xprError}</p>
                     </div>
-
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full h-11 font-medium text-[15px] rounded-xl border-border/60 hover:bg-muted/50"
-                      onClick={handleOAuthLogin}
-                      disabled={oauthLoading || isLoading}
-                    >
-                      {oauthLoading ? (
-                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                      ) : (
-                        <LogIn className="w-4 h-4 mr-2" />
-                      )}
-                      {t("sign_in_sso")}
-                    </Button>
-                  </>
-                )}
-
-                {oauthEnabled && oauthDiscoveryDone && !oauthMetadata && (
-                  <div className="mt-2 p-3 rounded-xl border border-warning/20 bg-warning/5 flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-full bg-warning/15 text-warning flex items-center justify-center flex-shrink-0 shadow-sm">
-                      <AlertCircle className="w-5 h-5" />
-                    </div>
-                    <div className="flex-1 min-w-0 self-center">
-                      <p className="text-sm text-warning leading-relaxed">
-                        {t("error.oauth_discovery_failed")}
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </form>
+                  )}
+                </div>
+              </div>
             )}
 
             {isAddAccountMode && (

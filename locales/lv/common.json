@@ -61,7 +61,13 @@
       "token_exchange_failed": "Neizdevās pabeigt autentifikāciju. Mēģiniet vēlreiz.",
       "access_denied": "Piekļuve liegta. Sazinieties ar administratoru.",
       "back_to_login": "Atgriezties pie pierakstīšanās"
-    }
+    },
+    "xpr_connecting_wallet": "Connecting wallet…",
+    "xpr_minting_credential": "Setting up your mailbox access…",
+    "xpr_requesting_challenge": "Requesting login challenge…",
+    "xpr_signing": "Connected as {actor} — sign in your wallet (this costs nothing)…",
+    "xpr_signing_in": "Signing in…",
+    "xpr_verifying": "Verifying…"
   },
   "sidebar": {
     "close": "Aizvērt",

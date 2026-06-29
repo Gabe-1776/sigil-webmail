@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Navy background -->
+  <circle cx="50" cy="50" r="50" fill="#0D1B5E"/>
+
+  <!-- Outer gold ring -->
+  <circle cx="50" cy="50" r="47" fill="none" stroke="#FACC15" stroke-width="2"/>
+
+  <!-- Thin teal ring -->
+  <circle cx="50" cy="50" r="43.5" fill="none" stroke="#34D6C2" stroke-width="0.75"/>
+
+  <!-- Greek dentil band — evenly spaced blocks like temple frieze -->
+  <circle cx="50" cy="50" r="40" fill="none" stroke="#FACC15" stroke-width="3"
+          stroke-dasharray="4.5 3.52" stroke-dashoffset="0.5"/>
+
+  <!-- Subtle inner glow ring -->
+  <circle cx="50" cy="50" r="33" fill="none" stroke="#34D6C2" stroke-width="0.5" opacity="0.4"/>
+
+  <!-- Greek Sigma Σ — angular, geometric, the S of Sigil -->
+  <path d="M 64 27 L 36 27 L 54 50 L 36 73 L 64 73"
+        fill="none"
+        stroke="white"
+        stroke-width="5.5"
+        stroke-linejoin="miter"
+        stroke-linecap="square"
+        stroke-miterlimit="12"/>
+</svg>

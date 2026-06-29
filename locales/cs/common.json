@@ -61,7 +61,13 @@
       "token_exchange_failed": "Ověření se nepodařilo dokončit. Zkuste to znovu.",
       "access_denied": "Přístup odepřen. Kontaktujte správce.",
       "back_to_login": "Zpět na přihlášení"
-    }
+    },
+    "xpr_connecting_wallet": "Connecting wallet…",
+    "xpr_minting_credential": "Setting up your mailbox access…",
+    "xpr_requesting_challenge": "Requesting login challenge…",
+    "xpr_signing": "Connected as {actor} — sign in your wallet (this costs nothing)…",
+    "xpr_signing_in": "Signing in…",
+    "xpr_verifying": "Verifying…"
   },
   "sidebar": {
     "close": "Zavřít",

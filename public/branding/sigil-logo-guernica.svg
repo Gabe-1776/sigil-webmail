@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Heraldic shield (Guernica-style) -->
+  <path d="M 12 12 L 88 12 L 88 52 C 88 76, 68 92, 50 96 C 32 92, 12 76, 12 52 Z"
+        fill="#0D1B5E"/>
+  <path d="M 12 12 L 88 12 L 88 52 C 88 76, 68 92, 50 96 C 32 92, 12 76, 12 52 Z"
+        fill="none" stroke="#FACC15" stroke-width="2.5"/>
+  <!-- Inner shield border -->
+  <path d="M 17 17 L 83 17 L 83 51 C 83 72, 66 86, 50 90 C 34 86, 17 72, 17 51 Z"
+        fill="none" stroke="#34D6C2" stroke-width="0.6" opacity="0.5"/>
+
+  <!-- Gernikako Arbola — the oak tree, central heraldic charge -->
+  <g stroke="#34D6C2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- Trunk -->
+    <path d="M 50 82 L 50 58" stroke-width="4.5"/>
+    <!-- Main branching forks -->
+    <path d="M 50 66 C 45 64, 41 60, 39 54" stroke-width="3"/>
+    <path d="M 50 66 C 55 64, 59 60, 61 54" stroke-width="3"/>
+    <path d="M 50 60 L 50 52" stroke-width="3"/>
+    <!-- Roots -->
+    <path d="M 50 82 C 46 84, 43 85, 41 85" stroke-width="2.5"/>
+    <path d="M 50 82 C 54 84, 57 85, 59 85" stroke-width="2.5"/>
+    <path d="M 50 83 L 50 87" stroke-width="2.5"/>
+  </g>
+
+  <!-- Canopy — three lobed cloud-bunches (heraldic oak style) -->
+  <g fill="#34D6C2">
+    <circle cx="50" cy="42" r="13"/>
+    <circle cx="35" cy="48" r="8"/>
+    <circle cx="65" cy="48" r="8"/>
+    <circle cx="50" cy="32" r="7"/>
+  </g>
+  <!-- Canopy accent highlights in gold -->
+  <g fill="#FACC15">
+    <circle cx="50" cy="42" r="4"/>
+    <circle cx="44" cy="44" r="1.6"/>
+    <circle cx="56" cy="44" r="1.6"/>
+  </g>
+</svg>

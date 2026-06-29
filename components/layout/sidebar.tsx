@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import { useRouter } from "@/i18n/navigation";
+import { useRouter, usePathname } from "@/i18n/navigation";
 import { PluginSlot } from "@/components/plugins/plugin-slot";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,7 +35,9 @@ import {
   BellOff,
   Mails,
   MailOpen,
+  ShieldCheck,
 } from "lucide-react";
+import { Link } from "@/i18n/navigation";
 import { cn, buildMailboxTree, MailboxNode } from "@/lib/utils";
 import { localizeMailboxName } from "@/lib/mailbox-label";
 import { Mailbox } from "@/lib/jmap/types";
@@ -702,6 +704,7 @@ export function Sidebar({
   onAccountMailboxSelect,
 }: SidebarProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const { sidebarCollapsed: isCollapsed, toggleSidebarCollapsed } = useUIStore();
   const { primaryIdentity: _primaryIdentity, activeAccountId } = useAuthStore();
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
@@ -1242,6 +1245,16 @@ export function Sidebar({
         )}
 
         {!isCollapsed && <PluginSlot name="sidebar-widget" className="border-t border-border" />}
+      </div>
+
+      <div className="border-t border-border">
+        <SidebarRow
+          icon={<ShieldCheck className={cn("w-4 h-4 flex-shrink-0", pathname?.includes("/grants") ? "text-foreground" : "")} style={pathname?.includes("/grants") ? undefined : { color: "#34D6C2" }} />}
+          label="Authorization"
+          isSelected={!!pathname?.includes("/grants")}
+          onClick={() => router.push("/grants")}
+          isCollapsed={isCollapsed}
+        />
       </div>
 
       <MailboxContextMenu

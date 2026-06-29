@@ -61,7 +61,13 @@
       "token_exchange_failed": "无法完成身份验证。请再试一次。",
       "access_denied": "访问被拒绝。请联系您的管理员。",
       "back_to_login": "返回登录"
-    }
+    },
+    "xpr_connecting_wallet": "Connecting wallet…",
+    "xpr_minting_credential": "Setting up your mailbox access…",
+    "xpr_requesting_challenge": "Requesting login challenge…",
+    "xpr_signing": "Connected as {actor} — sign in your wallet (this costs nothing)…",
+    "xpr_signing_in": "Signing in…",
+    "xpr_verifying": "Verifying…"
   },
   "sidebar": {
     "close": "关闭",
