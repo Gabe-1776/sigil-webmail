@@ -856,7 +856,7 @@ function AddressBookItem({
       style={{ paddingBlock: 'var(--density-sidebar-py, 4px)', minHeight: '32px' }}
     >
       <Book className="w-4 h-4 flex-shrink-0" />
-      <span className="truncate">{book.name}</span>
+      <span className="truncate">{book.name.replace(/^Stalwart\s+/i, '')}</span>
       {!book.isShared && Object.keys(book.shareWith || {}).length > 0 && (
         <Users className="w-3 h-3 text-muted-foreground flex-shrink-0 ml-auto" />
       )}

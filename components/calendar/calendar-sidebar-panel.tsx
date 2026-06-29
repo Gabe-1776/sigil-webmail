@@ -255,7 +255,7 @@ export function CalendarSidebarPanel({
             style={isVisible ? { backgroundColor: color, borderColor: color } : undefined}
           />
           <span className={cn("truncate", !isVisible && "text-muted-foreground")}>
-            {cal.name}
+            {cal.name.replace(/^Stalwart\s+/i, '')}
           </span>
           {isSubscriptionCalendar(cal.id) && (
             <>

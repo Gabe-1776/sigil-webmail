@@ -198,7 +198,7 @@ export function CalendarAgendaView({
                     )}
                     {calendar && (
                       <div className="text-xs text-muted-foreground mt-0.5">
-                        {calendar.name}
+                        {calendar.name.replace(/^Stalwart\s+/i, '')}
                       </div>
                     )}
                   </div>

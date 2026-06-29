@@ -778,7 +778,7 @@ export function EventModal({
               <h2 className="text-lg font-semibold truncate">{event.title || t("events.no_title")}</h2>
             </div>
             {eventCalendar && (
-              <p className="text-xs text-muted-foreground mt-0.5 pl-[18px]">{eventCalendar.name}</p>
+              <p className="text-xs text-muted-foreground mt-0.5 pl-[18px]">{eventCalendar.name.replace(/^Stalwart\s+/i, '')}</p>
             )}
           </div>
           <button onClick={onClose} className="p-1.5 rounded-md hover:bg-muted transition-colors duration-150 flex-shrink-0 mt-0.5 text-muted-foreground hover:text-foreground" aria-label={t("form.cancel")}>
@@ -1145,7 +1145,7 @@ export function EventModal({
               >
                 {calendars.map((cal) => (
                   <option key={cal.id} value={cal.id}>
-                    {cal.name}
+                    {cal.name.replace(/^Stalwart\s+/i, '')}
                   </option>
                 ))}
               </select>
