@@ -37,6 +37,7 @@ import {
   Mails,
   MailOpen,
   ShieldCheck,
+  Mail,
 } from "lucide-react";
 import { cn, buildMailboxTree, MailboxNode } from "@/lib/utils";
 import { localizeMailboxName } from "@/lib/mailbox-label";
@@ -1256,6 +1257,17 @@ export function Sidebar({
           onClick={openGrantsDrawer}
           isCollapsed={isCollapsed}
         />
+        <a
+          href="mailto:mailsigil@mailsigil.pro"
+          className={cn("flex items-center w-full text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors border-t border-border border-l-2 border-l-transparent", isCollapsed ? "justify-center px-1" : "pr-2")}
+          style={{ paddingBlock: 'var(--density-sidebar-py)' }}
+        >
+          {!isCollapsed && <div style={{ paddingLeft: 8 }}><div style={{ width: 20 }} aria-hidden /></div>}
+          <span className="flex items-center justify-center flex-shrink-0 w-4 h-4">
+            <Mail className="w-4 h-4" />
+          </span>
+          {!isCollapsed && <span className="flex-1 truncate ml-2">Contact</span>}
+        </a>
       </div>
 
       <MailboxContextMenu

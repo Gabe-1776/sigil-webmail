@@ -31,19 +31,9 @@ const GIT_COMMIT = process.env.NEXT_PUBLIC_GIT_COMMIT || "unknown";
 
 function SigilIcon({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 120 120" className={className} aria-hidden="true">
-      <rect x="22" y="38" width="76" height="52" rx="6" fill="#FACC15" />
-      <path
-        d="M 22 44 L 60 70 L 98 44 Q 98 38 92 38 L 28 38 Q 22 38 22 44 Z"
-        fill="#D8A510"
-      />
-      <path
-        d="M 22 44 L 60 70 L 98 44"
-        fill="none"
-        stroke="#9C7608"
-        strokeWidth="1.4"
-        strokeLinejoin="round"
-      />
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <path d="M2 7 L12 14 L22 7" />
     </svg>
   );
 }
@@ -685,7 +675,7 @@ export default function LoginPage() {
       }
 
       setXprStatus(t("xpr_signing_in") || "Signing in…");
-      const success = await login(serverUrl, appPasswordRes.username, appPasswordRes.password);
+      const success = await login(serverUrl, appPasswordRes.username, appPasswordRes.password, undefined, true);
       if (success) {
         if (verifyRes.accessToken) {
           localStorage.setItem("sigil_auth_token", verifyRes.accessToken);
@@ -789,11 +779,11 @@ export default function LoginPage() {
           <div className="rounded-2xl border border-border/60 bg-background/80 backdrop-blur-sm shadow-xl shadow-black/5 dark:shadow-black/20 overflow-hidden">
             {/* Header with logo */}
             <div className="px-8 pt-12 pb-4 text-center">
-              <div className="inline-flex items-center justify-center w-20 h-20 mb-6">
+              <div className="inline-flex items-center justify-center w-24 h-24 mb-6">
                 <img
                   src={withBasePath(resolvedTheme === 'dark' ? loginLogoDarkUrl : loginLogoLightUrl)}
                   alt={appName}
-                  className="max-w-20 max-h-20 object-contain"
+                  className="max-w-24 max-h-24 object-contain"
                 />
               </div>
               <h1 className="text-3xl font-bold text-foreground tracking-tight">
@@ -936,14 +926,14 @@ export default function LoginPage() {
 
       <div className="w-full max-w-[400px] mx-auto">
         {/* Card container */}
-        <div className="rounded-2xl border border-border/60 bg-background/80 backdrop-blur-sm shadow-xl shadow-black/5 dark:shadow-black/20 overflow-hidden">
+        <div className={cn("rounded-2xl border border-border/60 backdrop-blur-sm shadow-xl shadow-black/5 dark:shadow-black/20 overflow-hidden", theme === "sigil" ? "bg-[#1a2b7a]/90" : "bg-background/80")}>
           {/* Header section with logo */}
           <div className="px-8 pt-10 pb-6 text-center">
-            <div className="inline-flex items-center justify-center w-16 h-16 mb-5">
+            <div className="inline-flex items-center justify-center w-20 h-20 mb-5">
               <img
                 src={withBasePath(resolvedTheme === 'dark' ? loginLogoDarkUrl : loginLogoLightUrl)}
                 alt={appName}
-                className="max-w-16 max-h-16 object-contain"
+                className="max-w-20 max-h-20 object-contain"
               />
             </div>
             <h1 className="text-2xl font-semibold text-foreground tracking-tight">

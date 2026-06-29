@@ -38,7 +38,7 @@ export const viewport: Viewport = {
 
 export async function generateMetadata(): Promise<Metadata> {
   await configManager.ensureLoaded();
-  const faviconUrl = configManager.get<string>("faviconUrl", "/branding/sigil-favicon.svg");
+  const faviconUrl = configManager.get<string>("faviconUrl", "/branding/sigil-favicon.svg?v=3");
   // Localize the <head> description to match the UI language; a hardcoded
   // English description is another signal that makes Chrome offer to
   // "translate this page". Resolve the locale from the request path, since this

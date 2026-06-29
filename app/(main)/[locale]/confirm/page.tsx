@@ -154,7 +154,7 @@ export default function ConfirmPage() {
       }
 
       const effectiveServer = serverUrl || "https://mail.mailsigil.pro/jmap";
-      const loggedIn = await login(effectiveServer, appPwRes.username, appPwRes.password);
+      const loggedIn = await login(effectiveServer, appPwRes.username, appPwRes.password, undefined, true);
       if (loggedIn) {
         localStorage.setItem("sigil_auth_token", confirmRes.accessToken);
         localStorage.setItem("sigil_actor", actor);

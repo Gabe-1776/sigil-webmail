@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useAuthStore } from "@/stores/auth-store";
 import { useConfig } from "@/hooks/use-config";
@@ -82,6 +82,7 @@ export default function GrantsPage() {
 
   const [token, setToken] = useState<string | null>(null);
   const [actor, setActor] = useState<string | null>(null);
+  const [tokenExpiresAt, setTokenExpiresAt] = useState<Date | null>(null);
   const [linked, setLinked] = useState<LinkedAccounts | null>(null);
   const [incoming, setIncoming] = useState<IncomingGrant[]>([]);
   const [issued, setIssued] = useState<IssuedGrant[]>([]);
@@ -94,6 +95,19 @@ export default function GrantsPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+    if (pollTimeoutRef.current) { clearTimeout(pollTimeoutRef.current); pollTimeoutRef.current = null; }
+  }, []);
+
+  const startPolling = useCallback((loadFn: (background?: boolean) => Promise<void>) => {
+    stopPolling();
+    pollIntervalRef.current = setInterval(() => loadFn(true), 5000);
+    pollTimeoutRef.current = setTimeout(stopPolling, 2 * 60 * 1000);
+  }, [stopPolling]);
 
   const authFetch = useCallback(async (path: string, opts?: RequestInit) => {
     if (!token) throw new Error("Not authenticated");
@@ -101,12 +115,18 @@ export default function GrantsPage() {
       ...opts,
       headers: { ...opts?.headers, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     });
+    if (res.status === 401) {
+      localStorage.removeItem("sigil_auth_token");
+      localStorage.removeItem("sigil_actor");
+      router.push("/login");
+      throw new Error("Session expired");
+    }
     return res.json();
-  }, [token]);
+  }, [token, router]);
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (background = false) => {
     if (!token) return;
-    setLoading(true);
+    if (!background) setLoading(true);
     try {
       const [linkedRes, incomingRes, issuedRes, acceptedRes, incomingPmRes, sentPmRes] = await Promise.all([
         authFetch("/api/agentcore/linked"),
@@ -132,9 +152,22 @@ export default function GrantsPage() {
     if (!t || !a) { router.push("/login"); return; }
     setToken(t);
     setActor(a);
+    try {
+      const payload = JSON.parse(atob(t.split(".")[1]));
+      if (payload.exp) setTokenExpiresAt(new Date(payload.exp * 1000));
+    } catch { /* non-fatal */ }
   }, [router]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Stop polling once no pending outgoing grants remain (all accepted/revoked)
+  useEffect(() => {
+    const hasPending = issued.some(g => g.status === "pending");
+    if (!hasPending) stopPolling();
+  }, [issued, stopPolling]);
+
+  // Clean up on unmount
+  useEffect(() => () => stopPolling(), [stopPolling]);
 
   const setStatus = (id: string, msg: string) =>
     setActionStatus((s) => ({ ...s, [id]: msg }));
@@ -190,27 +223,6 @@ export default function GrantsPage() {
     } catch { setStatus(grantId, "Error"); setTimeout(() => clearStatus(grantId), 3000); }
   };
 
-  const handleClaimAgentMailbox = async (agentActor: string) => {
-    const key = `claim-${agentActor}`;
-    setStatus(key, "Claiming…");
-    try {
-      const res = await authFetch("/api/grants/claim-agent-mailbox", {
-        method: "POST",
-        body: JSON.stringify({ agentActor }),
-      });
-      if (res.ok && res.credential) {
-        setStatus(key, "Adding to account switcher…");
-        const added = await addGrantedAccount(res.credential.username, res.credential.password);
-        if (added) { router.push("/"); return; }
-        setStatus(key, "Claimed");
-        setTimeout(() => clearStatus(key), 3000);
-      } else {
-        setStatus(key, res.error || "Failed");
-        setTimeout(() => clearStatus(key), 3000);
-      }
-    } catch { setStatus(key, "Error"); setTimeout(() => clearStatus(key), 3000); }
-  };
-
   const handleOfferGrant = async (toActor: string) => {
     const key = `offer-${toActor}`;
     setStatus(key, "Sending…");
@@ -220,12 +232,12 @@ export default function GrantsPage() {
         body: JSON.stringify({ granteeActor: toActor }),
       });
       if (res.id || res.ok) {
-        setStatus(key, "Sent!");
-        setTimeout(() => clearStatus(key), 3000);
         await loadAll();
+        clearStatus(key);
+        startPolling(loadAll);
       } else {
         setStatus(key, res.error || "Failed");
-        setTimeout(() => clearStatus(key), 3000);
+        setTimeout(() => clearStatus(key), 4000);
       }
     } catch { setStatus(key, "Error"); setTimeout(() => clearStatus(key), 3000); }
   };
@@ -327,7 +339,7 @@ export default function GrantsPage() {
         ))}
         <div className="mt-auto px-4 pt-3 border-t border-border">
           <button
-            onClick={loadAll}
+            onClick={() => loadAll()}
             className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <RefreshCw className={cn("w-3 h-3", loading && "animate-spin")} />
@@ -353,7 +365,15 @@ export default function GrantsPage() {
                 <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                   <Mail className="w-5 h-5 text-primary" />
                 </div>
-                <p className="font-medium">{actor}@mailsigil.pro</p>
+                <div>
+                  <p className="font-medium">{actor}@mailsigil.pro</p>
+                  {tokenExpiresAt && (
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Auth session valid until {tokenExpiresAt.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      {" · "}sign out from the main menu to refresh
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -378,7 +398,7 @@ export default function GrantsPage() {
                           disabled={!!actionStatus[key]}
                           className="shrink-0 text-xs"
                         >
-                          {actionStatus[key] ?? "Switch to Mailbox"}
+                          {actionStatus[key] ?? "Add Mailbox"}
                         </Button>
                       </div>
                     );
@@ -463,24 +483,34 @@ export default function GrantsPage() {
             ) : (
               <div className="space-y-2">
                 {linked.ownedAgents.map((agentActor) => {
-                  const claimKey = `claim-${agentActor}`;
                   const offerKey = `offer-${agentActor}`;
+                  const liveGrant = issued.find(g => g.grantee_actor === agentActor && (g.status === "pending" || g.status === "accepted"));
+                  const isSending = actionStatus[offerKey] === "Sending…";
                   return (
-                    <div key={agentActor} className="rounded-lg border border-border bg-card p-4">
+                    <div key={agentActor} className="rounded-lg border border-border bg-card p-4 space-y-3">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="text-sm font-medium">{agentActor}@mailsigil.pro</p>
                           <p className="text-xs text-muted-foreground">Your agent</p>
                         </div>
-                        <div className="flex gap-1.5 flex-wrap justify-end">
-                          <Button size="sm" variant="outline" onClick={() => handleClaimAgentMailbox(agentActor)} disabled={!!actionStatus[claimKey]} className="text-xs">
-                            {actionStatus[claimKey] ?? "Add to Account Switcher"}
+                        {liveGrant?.status === "accepted" ? (
+                          <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                            <Check className="w-3 h-3" /> Grant accepted
+                          </span>
+                        ) : (
+                          <Button size="sm" variant="outline" onClick={() => handleOfferGrant(agentActor)} disabled={isSending || liveGrant?.status === "pending"} className="text-xs">
+                            {isSending ? "Sending…" : liveGrant?.status === "pending" ? "Offer sent" : "Offer My Mailbox Access"}
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => handleOfferGrant(agentActor)} disabled={!!actionStatus[offerKey]} className="text-xs">
-                            {actionStatus[offerKey] ?? "Offer My Mailbox Access"}
-                          </Button>
-                        </div>
+                        )}
                       </div>
+                      {liveGrant?.status === "pending" && (
+                        <div className="rounded-md bg-primary/8 border border-primary/20 px-3 py-2 flex items-start gap-2">
+                          <ShieldCheck className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
+                          <p className="text-xs text-muted-foreground">
+                            Grant sent — tell <span className="font-medium text-foreground">{agentActor}</span> to accept it. This page will update automatically for 2 minutes, or hit Refresh if the status hasn&apos;t changed.
+                          </p>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

@@ -1,12 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- Favicon-optimized long s: bold for small sizes -->
-  <circle cx="32" cy="32" r="32" fill="#0D1B5E"/>
-  <circle cx="32" cy="32" r="30" fill="none" stroke="#FACC15" stroke-width="1.5"/>
-  <circle cx="32" cy="32" r="25.5" fill="none" stroke="#34D6C2" stroke-width="0.75" opacity="0.6"/>
-
-  <!-- Bold long s -->
-  <path d="M 43 14 C 36 14.3, 32.5 18, 31.5 25
-           C 30.5 32, 30 40, 29 47
-           C 28.2 52, 32 55, 40 54"
-        fill="none" stroke="#FACC15" stroke-width="6.5" stroke-linecap="round"/>
+  <defs>
+    <linearGradient id="fg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FDE469"/>
+      <stop offset="100%" stop-color="#D8A510"/>
+    </linearGradient>
+    <linearGradient id="fl" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E8B911"/>
+      <stop offset="100%" stop-color="#B8820A"/>
+    </linearGradient>
+  </defs>
+  <!-- Envelope body -->
+  <rect x="3" y="10" width="58" height="44" rx="4" fill="url(#fg)"/>
+  <!-- Flap -->
+  <path d="M 3 14 L 32 34 L 61 14 Q 61 10 57 10 L 7 10 Q 3 10 3 14 Z" fill="url(#fl)"/>
+  <!-- Flap crease -->
+  <path d="M 3 14 L 32 34 L 61 14" fill="none" stroke="#8B6008" stroke-width="1" stroke-linejoin="round"/>
+  <!-- Bottom fold hint -->
+  <path d="M 5 50 L 32 36 L 59 50" fill="none" stroke="#8B6008" stroke-width="0.6" opacity="0.35" stroke-linejoin="round"/>
 </svg>
