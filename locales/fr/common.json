@@ -870,7 +870,8 @@
         "description": "Choisissez votre schéma de couleurs préféré",
         "light": "Clair",
         "dark": "Sombre",
-        "system": "Système"
+        "system": "Système",
+        "sigil": "Sigil"
       },
       "language": {
         "label": "Langue",

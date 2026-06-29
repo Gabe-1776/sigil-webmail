@@ -29,10 +29,30 @@ function findServerByDomain(servers: PublicJmapServerEntry[], email: string | un
 const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0";
 const GIT_COMMIT = process.env.NEXT_PUBLIC_GIT_COMMIT || "unknown";
 
+function SigilIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 120 120" className={className} aria-hidden="true">
+      <rect x="22" y="38" width="76" height="52" rx="6" fill="#FACC15" />
+      <path
+        d="M 22 44 L 60 70 L 98 44 Q 98 38 92 38 L 28 38 Q 22 38 22 44 Z"
+        fill="#D8A510"
+      />
+      <path
+        d="M 22 44 L 60 70 L 98 44"
+        fill="none"
+        stroke="#9C7608"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 const THEME_OPTIONS = [
   { value: "light" as const, icon: Sun, label: "Light" },
   { value: "dark" as const, icon: Moon, label: "Dark" },
   { value: "system" as const, icon: Monitor, label: "System" },
+  { value: "sigil" as const, icon: SigilIcon, label: "Sigil" },
 ];
 
 function VersionBadge() {
@@ -426,7 +446,7 @@ export default function LoginPage() {
     startServerSideSso();
   }, [autoSsoEnabled, oauthOnly, oauthDiscoveryDone, oauthMetadata, ssoError, isAddAccountMode, isAuthenticated, startServerSideSso]);
 
-  const handleThemeSelect = useCallback((newTheme: "light" | "dark" | "system") => {
+  const handleThemeSelect = useCallback((newTheme: "light" | "dark" | "system" | "sigil") => {
     setTheme(newTheme);
     setShowThemeMenu(false);
   }, [setTheme]);

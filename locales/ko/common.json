@@ -870,7 +870,8 @@
         "description": "선호하는 색상 테마를 선택해 주세요",
         "light": "라이트",
         "dark": "다크",
-        "system": "시스템"
+        "system": "시스템",
+        "sigil": "Sigil"
       },
       "language": {
         "label": "언어",

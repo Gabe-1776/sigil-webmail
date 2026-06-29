@@ -870,7 +870,8 @@
         "description": "Kies je voorkeurkleurenschema",
         "light": "Licht",
         "dark": "Donker",
-        "system": "Systeem"
+        "system": "Systeem",
+        "sigil": "Sigil"
       },
       "language": {
         "label": "Taal",

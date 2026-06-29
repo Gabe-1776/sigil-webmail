@@ -870,7 +870,8 @@
         "description": "Elija su esquema de color preferido",
         "light": "Claro",
         "dark": "Oscuro",
-        "system": "Sistema"
+        "system": "Sistema",
+        "sigil": "Sigil"
       },
       "language": {
         "label": "Idioma",

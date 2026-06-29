@@ -870,7 +870,8 @@
         "description": "Tercih ettiğiniz renk şemasını seçin",
         "light": "Açık",
         "dark": "Koyu",
-        "system": "Sistem"
+        "system": "Sistem",
+        "sigil": "Sigil"
       },
       "language": {
         "label": "Dil",

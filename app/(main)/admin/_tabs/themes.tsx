@@ -10,6 +10,7 @@ const BUILTIN_THEME_OPTIONS = [
   { id: 'builtin-nord', name: 'Nord' },
   { id: 'builtin-catppuccin', name: 'Catppuccin' },
   { id: 'builtin-solarized', name: 'Solarized' },
+  { id: 'builtin-sigil', name: 'Sigil' },
 ];
 
 interface ThemeEntry {

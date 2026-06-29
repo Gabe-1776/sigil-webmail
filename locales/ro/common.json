@@ -873,7 +873,8 @@
         "description": "Alegeți schema de culori preferată",
         "light": "Ușor",
         "dark": "Întunecat",
-        "system": "Sistem"
+        "system": "Sistem",
+        "sigil": "Sigil"
       },
       "language": {
         "label": "Limba",

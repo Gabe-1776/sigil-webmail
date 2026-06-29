@@ -874,6 +874,88 @@ body[data-theme-skin="builtin-aurora-glass"] [role="menu"] [role="menuitem"]:foc
   background-color: rgba(139, 123, 255, 0.22) !important;
 }`;
 
+const sigilCSS = `
+:root {
+  --color-border: rgba(255, 255, 255, 0.10);
+  --color-input: rgba(255, 255, 255, 0.10);
+  --color-ring: #34D6C2;
+  --color-background: #0D1B5E;
+  --color-foreground: #FFFFFF;
+  --color-primary: #FACC15;
+  --color-primary-foreground: #0D1B5E;
+  --color-secondary: rgba(255, 255, 255, 0.08);
+  --color-secondary-foreground: #FFFFFF;
+  --color-muted: rgba(255, 255, 255, 0.08);
+  --color-muted-foreground: #94A3B8;
+  --color-accent: rgba(250, 204, 21, 0.15);
+  --color-accent-foreground: #FACC15;
+  --color-destructive: #EF4444;
+  --color-destructive-foreground: #FFFFFF;
+  --color-popover: rgba(13, 27, 94, 0.95);
+  --color-popover-foreground: #FFFFFF;
+  --color-sidebar: #0D1B5E;
+  --color-sidebar-foreground: #FFFFFF;
+  --color-sidebar-border: rgba(255, 255, 255, 0.10);
+  --color-sidebar-accent: rgba(255, 255, 255, 0.08);
+  --color-sidebar-accent-foreground: #FFFFFF;
+  --color-card: rgba(13, 27, 94, 0.85);
+  --color-card-foreground: #FFFFFF;
+  --color-success: #22C55E;
+  --color-success-foreground: #FFFFFF;
+  --color-warning: #EAB308;
+  --color-warning-foreground: #0D1B5E;
+  --color-info: #34D6C2;
+  --color-info-foreground: #0D1B5E;
+  --color-selection: rgba(52, 214, 194, 0.25);
+  --color-selection-foreground: #FFFFFF;
+  --color-unread: #34D6C2;
+  --color-chart-1: #FACC15;
+  --color-chart-2: #34D6C2;
+  --color-chart-3: #2563EB;
+  --color-chart-4: #EF4444;
+  --color-chart-5: #8B5CF6;
+}
+.dark {
+  --color-border: rgba(255, 255, 255, 0.10);
+  --color-input: rgba(255, 255, 255, 0.10);
+  --color-ring: #34D6C2;
+  --color-background: #0D1B5E;
+  --color-foreground: #FFFFFF;
+  --color-primary: #FACC15;
+  --color-primary-foreground: #0D1B5E;
+  --color-secondary: rgba(255, 255, 255, 0.08);
+  --color-secondary-foreground: #FFFFFF;
+  --color-muted: rgba(255, 255, 255, 0.08);
+  --color-muted-foreground: #94A3B8;
+  --color-accent: rgba(250, 204, 21, 0.15);
+  --color-accent-foreground: #FACC15;
+  --color-destructive: #EF4444;
+  --color-destructive-foreground: #FFFFFF;
+  --color-popover: rgba(13, 27, 94, 0.95);
+  --color-popover-foreground: #FFFFFF;
+  --color-sidebar: #0D1B5E;
+  --color-sidebar-foreground: #FFFFFF;
+  --color-sidebar-border: rgba(255, 255, 255, 0.10);
+  --color-sidebar-accent: rgba(255, 255, 255, 0.08);
+  --color-sidebar-accent-foreground: #FFFFFF;
+  --color-card: rgba(13, 27, 94, 0.85);
+  --color-card-foreground: #FFFFFF;
+  --color-success: #22C55E;
+  --color-success-foreground: #FFFFFF;
+  --color-warning: #EAB308;
+  --color-warning-foreground: #0D1B5E;
+  --color-info: #34D6C2;
+  --color-info-foreground: #0D1B5E;
+  --color-selection: rgba(52, 214, 194, 0.25);
+  --color-selection-foreground: #FFFFFF;
+  --color-unread: #34D6C2;
+  --color-chart-1: #FACC15;
+  --color-chart-2: #34D6C2;
+  --color-chart-3: #2563EB;
+  --color-chart-4: #EF4444;
+  --color-chart-5: #8B5CF6;
+}`;
+
 export const BUILTIN_THEMES: InstalledTheme[] = [
   {
     id: 'builtin-qui',
@@ -942,6 +1024,17 @@ export const BUILTIN_THEMES: InstalledTheme[] = [
     skin: auroraSkin,
     variants: ['light', 'dark'],
     typography: { fontSans: '"Inter", "SF Pro Display", "Segoe UI", system-ui, sans-serif' },
+    enabled: true,
+    builtIn: true,
+  },
+  {
+    id: 'builtin-sigil',
+    name: 'Sigil',
+    version: '1.0.0',
+    author: 'Built-in',
+    description: 'MailSigil brand palette — deep navy, gold accents, and teal highlights',
+    css: sigilCSS,
+    variants: ['light', 'dark'],
     enabled: true,
     builtIn: true,
   },

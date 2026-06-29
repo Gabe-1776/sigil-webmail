@@ -15,7 +15,7 @@ import { usePolicyStore } from '@/stores/policy-store';
 import { apiFetch } from '@/lib/browser-navigation';
 import { themeHooks } from '@/lib/plugin-hooks';
 
-type Theme = 'light' | 'dark' | 'system';
+type Theme = 'light' | 'dark' | 'system' | 'sigil';
 
 function getForcedThemeId(installedThemes: InstalledTheme[]): string | null {
   const policyForcedThemeId = usePolicyStore
@@ -54,6 +54,12 @@ const getSystemTheme = (): 'light' | 'dark' => {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 };
 
+const resolveTheme = (theme: Theme): 'light' | 'dark' => {
+  if (theme === 'system') return getSystemTheme();
+  if (theme === 'sigil') return 'dark';
+  return theme;
+};
+
 const applyTheme = (theme: 'light' | 'dark') => {
   if (typeof document === 'undefined') return;
 
@@ -78,19 +84,35 @@ let themeSyncPromise: Promise<void> | null = null;
 export const useThemeStore = create<ThemeState>()(
   persist(
     (set, get) => ({
-      theme: 'system',
-      resolvedTheme: 'light',
+      theme: 'sigil',
+      resolvedTheme: 'dark',
       hydrated: false,
       installedThemes: [...BUILTIN_THEMES],
-      activeThemeId: null,
+      activeThemeId: 'builtin-sigil',
 
       setTheme: (theme) => {
-        const resolvedTheme = theme === 'system' ? getSystemTheme() : theme;
+        const resolvedTheme = resolveTheme(theme);
         applyTheme(resolvedTheme);
-        set({ theme, resolvedTheme });
+
+        if (theme === 'sigil') {
+          set({ theme, resolvedTheme });
+          get().activateTheme('builtin-sigil');
+          return;
+        }
+
+        // Leaving Sigil mode: clear the built-in Sigil theme so base tokens return
+        const { activeThemeId } = get();
+        if (activeThemeId === 'builtin-sigil') {
+          set({ theme, resolvedTheme, activeThemeId: null });
+          removeThemeCSS();
+          removeThemeSkinCSS();
+        } else {
+          set({ theme, resolvedTheme });
+        }
+
         // Re-apply active custom theme for new mode
-        const { activeThemeId, installedThemes } = get();
-        if (activeThemeId) {
+        const { installedThemes } = get();
+        if (activeThemeId && activeThemeId !== 'builtin-sigil') {
           const t = installedThemes.find(t => t.id === activeThemeId);
           if (t) applyCustomThemeCSS(t, resolvedTheme);
         }
@@ -100,13 +122,14 @@ export const useThemeStore = create<ThemeState>()(
         const { theme } = get();
         const nextTheme: Theme =
           theme === 'light' ? 'dark' :
-          theme === 'dark' ? 'system' : 'light';
+          theme === 'dark' ? 'system' :
+          theme === 'system' ? 'sigil' : 'light';
         get().setTheme(nextTheme);
       },
 
       initializeTheme: () => {
         const { theme, activeThemeId, installedThemes } = get();
-        const resolvedTheme = theme === 'system' ? getSystemTheme() : theme;
+        const resolvedTheme = resolveTheme(theme);
         applyTheme(resolvedTheme);
         set({ resolvedTheme, hydrated: true });
 
@@ -471,7 +494,7 @@ export const useThemeStore = create<ThemeState>()(
             }
 
             // Re-apply theme immediately after rehydration
-            const resolvedTheme = state.theme === 'system' ? getSystemTheme() : state.theme;
+            const resolvedTheme = resolveTheme(state.theme);
             applyTheme(resolvedTheme);
             state.resolvedTheme = resolvedTheme;
             state.hydrated = true;

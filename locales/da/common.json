@@ -873,7 +873,8 @@
         "description": "Vælg dit foretrukne farveskema",
         "light": "Lys",
         "dark": "Mørk",
-        "system": "System"
+        "system": "System",
+        "sigil": "Sigil"
       },
       "language": {
         "label": "Sprog",

@@ -870,7 +870,8 @@
         "description": "お好みの配色を選択",
         "light": "ライト",
         "dark": "ダーク",
-        "system": "システム"
+        "system": "システム",
+        "sigil": "Sigil"
       },
       "language": {
         "label": "言語",

@@ -870,7 +870,8 @@
         "description": "Vyberte preferované barevné schéma",
         "light": "Světlý",
         "dark": "Tmavý",
-        "system": "Systémový"
+        "system": "Systémový",
+        "sigil": "Sigil"
       },
       "language": {
         "label": "Jazyk",

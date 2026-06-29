@@ -76,11 +76,12 @@ export function AppearanceSettings() {
       <SettingItem label={t('theme.label')} description={t('theme.description')}>
         <RadioGroup
           value={theme}
-          onChange={(value) => setTheme(value as 'light' | 'dark' | 'system')}
+          onChange={(value) => setTheme(value as 'light' | 'dark' | 'system' | 'sigil')}
           options={[
             { value: 'light', label: t('theme.light') },
             { value: 'dark', label: t('theme.dark') },
             { value: 'system', label: t('theme.system') },
+            { value: 'sigil', label: t('theme.sigil') },
           ]}
         />
       </SettingItem>

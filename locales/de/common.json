@@ -870,7 +870,8 @@
         "description": "Wählen Sie Ihr bevorzugtes Farbschema",
         "light": "Hell",
         "dark": "Dunkel",
-        "system": "System"
+        "system": "System",
+        "sigil": "Sigil"
       },
       "language": {
         "label": "Sprache",

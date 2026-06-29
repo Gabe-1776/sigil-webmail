@@ -873,7 +873,8 @@
         "description": "Choose your preferred color scheme",
         "light": "Light",
         "dark": "Dark",
-        "system": "System"
+        "system": "System",
+        "sigil": "Sigil"
       },
       "language": {
         "label": "Language",

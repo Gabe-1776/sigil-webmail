@@ -873,7 +873,8 @@
         "description": "Válaszd ki a preferált színösszeállítást",
         "light": "Világos",
         "dark": "Sötét",
-        "system": "Rendszer"
+        "system": "Rendszer",
+        "sigil": "Sigil"
       },
       "language": {
         "label": "Nyelv",

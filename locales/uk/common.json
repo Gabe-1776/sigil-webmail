@@ -870,7 +870,8 @@
         "description": "Виберіть бажану колірну схему",
         "light": "світло",
         "dark": "Темний",
-        "system": "система"
+        "system": "система",
+        "sigil": "Sigil"
       },
       "language": {
         "label": "Мова",

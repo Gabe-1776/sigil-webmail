@@ -873,7 +873,8 @@
         "description": "طرح رنگی مورد نظر خود را انتخاب کنید",
         "light": "روشن",
         "dark": "تاریک",
-        "system": "سیستم"
+        "system": "سیستم",
+        "sigil": "Sigil"
       },
       "language": {
         "label": "زبان",

@@ -870,7 +870,8 @@
         "description": "Izvēlieties vēlamo krāsu shēmu",
         "light": "Gaišā",
         "dark": "Tumšā",
-        "system": "Sistēmas"
+        "system": "Sistēmas",
+        "sigil": "Sigil"
       },
       "language": {
         "label": "Valoda",

@@ -870,7 +870,8 @@
         "description": "Wybierz preferowany schemat kolorów",
         "light": "Jasny",
         "dark": "Ciemny",
-        "system": "Systemowy"
+        "system": "Systemowy",
+        "sigil": "Sigil"
       },
       "language": {
         "label": "Język",

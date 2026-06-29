@@ -5,6 +5,13 @@
 :root {
   font-size: var(--font-size-base);
 
+  /* Mailsigil brand palette */
+  --brand-navy: #0D1B5E;
+  --brand-royal: #2563EB;
+  --brand-blue: #1E40AF;
+  --brand-yellow: #FACC15;
+  --brand-teal: #34D6C2;
+
   --color-border: #e2e8f0;
   --color-input: #e2e8f0;
   --color-ring: #94a3b8;
@@ -184,6 +191,29 @@ body {
   font-feature-settings:
     "rlig" 1,
     "calt" 1;
+}
+
+/* Mailsigil branded login background — navy-to-royal-blue gradient */
+.login-brand-bg {
+  background: linear-gradient(135deg, #0D1B5E 0%, #1E40AF 55%, #2563EB 100%);
+}
+
+/* Dark navy sidebar — scoped CSS var overrides so all Tailwind utils
+   (text-foreground, bg-accent, border-border, etc.) use light values
+   inside the sidebar without touching individual classNames. */
+.sidebar-brand {
+  --color-foreground: #E2E8F0;
+  --color-muted-foreground: #94A3B8;
+  --color-border: rgba(255, 255, 255, 0.09);
+  --color-secondary: rgba(255, 255, 255, 0.06);
+  --color-secondary-foreground: #E2E8F0;
+  --color-muted: rgba(255, 255, 255, 0.07);
+  --color-accent: rgba(255, 255, 255, 0.11);
+  --color-accent-foreground: #FFFFFF;
+  --color-primary: #34D6C2;
+  --color-primary-foreground: #0D1B5E;
+  --color-ring: #34D6C2;
+  --color-input: rgba(255, 255, 255, 0.1);
 }
 
 /* Minimalist scrollbar */

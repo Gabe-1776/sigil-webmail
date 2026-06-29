@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <defs>
+    <linearGradient id="envGold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FDE469"/>
+      <stop offset="50%" stop-color="#FACC15"/>
+      <stop offset="100%" stop-color="#D8A510"/>
+    </linearGradient>
+    <linearGradient id="flapDark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E8B911"/>
+      <stop offset="100%" stop-color="#C28E0C"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ===== ENVELOPE BODY ===== -->
+  <rect x="22" y="38" width="76" height="52" rx="6" fill="url(#envGold)"/>
+  <!-- Back flap (top portion, slightly darker for depth) -->
+  <path d="M 22 44 L 60 70 L 98 44 L 98 44 Q 98 38 92 38 L 28 38 Q 22 38 22 44 Z"
+        fill="url(#flapDark)"/>
+  <!-- Flap fold lines -->
+  <path d="M 22 44 L 60 70 L 98 44"
+        fill="none" stroke="#9C7608" stroke-width="1.4" stroke-linejoin="round"/>
+  <!-- Flap highlight -->
+  <path d="M 26 42 L 60 66 L 94 42"
+        fill="none" stroke="#FEF3A8" stroke-width="0.8" opacity="0.7" stroke-linejoin="round"/>
+  <!-- Bottom fold shadow -->
+  <path d="M 26 86 L 60 70 L 94 86"
+        fill="none" stroke="#9C7608" stroke-width="0.7" opacity="0.3" stroke-linejoin="round"/>
+
+  <!-- Side fold hints -->
+  <line x1="22" y1="58" x2="22" y2="82" stroke="#9C7608" stroke-width="0.5" opacity="0.25"/>
+  <line x1="98" y1="58" x2="98" y2="82" stroke="#9C7608" stroke-width="0.5" opacity="0.25"/>
+</svg>
