@@ -884,7 +884,10 @@ export class JMAPClient implements IJMAPClient {
 
       if (response.methodResponses?.[0]?.[0] === "Quota/get") {
         const quotas = (response.methodResponses[0][1].list || []) as JMAPQuota[];
-        const mailQuota = quotas.find((q) => q.resourceType === "mail" || q.scope === "mail");
+        // Stalwart returns resourceType "octets" / scope "account" instead of "mail"
+        const mailQuota = quotas.find(
+          (q) => q.resourceType === "octets" || q.scope === "account" || q.resourceType === "mail" || q.scope === "mail"
+        );
 
         if (mailQuota) {
           return {
