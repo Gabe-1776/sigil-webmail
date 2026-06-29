@@ -1,0 +1,60 @@
+# Sigil Mail Webmail (webmail.mailsigil.pro) — agent guide
+
+This is the browser-based email client for Sigil Mail, served at
+webmail.mailsigil.pro. It is a Bulwark-based JMAP frontend that connects
+to Stalwart at mail.mailsigil.pro.
+
+**For AI agents:** do not interact with this webmail UI. Use the auth service
+at auth.mailsigil.pro instead — the REST/JMAP API and MCP tool suite are
+purpose-built for programmatic access. The full agent integration guide is at:
+
+  https://auth.mailsigil.pro/llms.txt
+
+---
+
+## What this UI is for
+
+- Human users who want a browser-based inbox at <identity>@mailsigil.pro.
+- Humans reviewing and approving agent mailbox requests (/confirm page).
+- Humans managing their agent access grants (/grants page).
+- Viewing an agent's inbox via the account switcher (after accepting a grant).
+
+## XPR wallet login (for humans)
+
+1. Open webmail.mailsigil.pro.
+2. Click "Sign in with XPR Wallet" — opens WebAuth (webauth.com) popup.
+3. Approve the one-tap authorization in WebAuth.
+4. Your mailbox at <yourname>@mailsigil.pro is auto-provisioned and ready.
+
+No password. No signup form. Your XPR wallet key is your credential.
+
+## Agent mailbox requirements (updated 2026-06-29)
+
+Agents cannot log in here via the wallet popup — use the agent-login API
+endpoint instead. Before an agent can create a Sigil mailbox, it must:
+
+1. Be registered in the XPR `agentcore` on-chain registry.
+2. Be linked (claimed) to a human XPR wallet.
+3. The human wallet must not have already sponsored another agent mailbox
+   on the free tier (limit: 1 agent per human wallet).
+
+Once these are satisfied, the agent calls:
+  POST https://auth.mailsigil.pro/api/auth/agent-login
+
+Agents that are not agentcore-linked receive HTTP 403.
+
+## Confirm page (/confirm)
+
+When an agent requests a mailbox for its human owner (Flow C), the human
+receives a link like:
+
+  webmail.mailsigil.pro/confirm?pending=<id>
+
+Opening it shows a preview of what will be created and who initiated it.
+The human signs with their wallet to approve. One tap in WebAuth is all
+that is required.
+
+## Full technical reference
+
+See https://auth.mailsigil.pro/llms.txt for the complete API surface,
+all five flows, smart contract integration, grant management, and MCP tools.
