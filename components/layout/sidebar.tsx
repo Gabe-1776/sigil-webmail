@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useMemo, ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import { useRouter, usePathname } from "@/i18n/navigation";
+import { useRouter } from "@/i18n/navigation";
+import { useGrantsDrawerStore } from "@/stores/grants-drawer-store";
 import { PluginSlot } from "@/components/plugins/plugin-slot";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,7 +38,6 @@ import {
   MailOpen,
   ShieldCheck,
 } from "lucide-react";
-import { Link } from "@/i18n/navigation";
 import { cn, buildMailboxTree, MailboxNode } from "@/lib/utils";
 import { localizeMailboxName } from "@/lib/mailbox-label";
 import { Mailbox } from "@/lib/jmap/types";
@@ -704,7 +704,8 @@ export function Sidebar({
   onAccountMailboxSelect,
 }: SidebarProps) {
   const router = useRouter();
-  const pathname = usePathname();
+  const openGrantsDrawer = useGrantsDrawerStore((s) => s.open);
+  const grantsDrawerOpen = useGrantsDrawerStore((s) => s.isOpen);
   const { sidebarCollapsed: isCollapsed, toggleSidebarCollapsed } = useUIStore();
   const { primaryIdentity: _primaryIdentity, activeAccountId } = useAuthStore();
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
@@ -1249,10 +1250,10 @@ export function Sidebar({
 
       <div className="border-t border-border">
         <SidebarRow
-          icon={<ShieldCheck className={cn("w-4 h-4 flex-shrink-0", pathname?.includes("/grants") ? "text-foreground" : "")} style={pathname?.includes("/grants") ? undefined : { color: "#34D6C2" }} />}
+          icon={<ShieldCheck className={cn("w-4 h-4 flex-shrink-0", grantsDrawerOpen ? "text-foreground" : "")} style={grantsDrawerOpen ? undefined : { color: "#34D6C2" }} />}
           label="Authorization"
-          isSelected={!!pathname?.includes("/grants")}
-          onClick={() => router.push("/grants")}
+          isSelected={grantsDrawerOpen}
+          onClick={openGrantsDrawer}
           isCollapsed={isCollapsed}
         />
       </div>

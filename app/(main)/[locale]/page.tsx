@@ -77,6 +77,7 @@ import { buildQuoteHeader } from "@/lib/quote-header";
 import { buildReplySubject, buildForwardSubject } from "@/lib/subject-prefix";
 import { useLocaleStore } from "@/stores/locale-store";
 import type { QuoteHeader } from "@/lib/plugin-types";
+import { GrantsDrawer } from "@/components/grants/grants-drawer";
 
 const SCHEDULED_MAILBOX_ID = '__scheduled__';
 
@@ -3323,6 +3324,7 @@ export default function Home() {
         <ConfirmDialog {...confirmDialogProps} />
         <PromptDialog {...promptDialogProps} />
         <TotpReauthDialog />
+        <GrantsDrawer />
       </div>
     </DragDropProvider>
   );

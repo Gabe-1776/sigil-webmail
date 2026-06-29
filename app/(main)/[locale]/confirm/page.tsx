@@ -75,7 +75,6 @@ export default function ConfirmPage() {
   const handleApprove = useCallback(async () => {
     handleApproveRef.current = null; // clear so auto-start only fires once
     if (stage.type !== "ready") return;
-    const { info } = stage;
 
     setStage({ type: "connecting" });
     try {

@@ -153,16 +153,16 @@ export default function LoginPage() {
   const isMobileHandoff = Boolean(mobileRedirectUri);
   const { login, loginDemo, isLoading, error, clearError, isAuthenticated } = useAuthStore();
   const { theme, setTheme, initializeTheme } = useThemeStore(useShallow((s) => ({ theme: s.theme, setTheme: s.setTheme, initializeTheme: s.initializeTheme })));
-  const { appName, jmapServerUrl: configuredServerUrl, oauthEnabled, oauthOnly, oauthClientId: globalOauthClientId, oauthIssuerUrl: globalOauthIssuerUrl, oauthScopes, rememberMeEnabled, devMode, demoMode, loginLogoLightUrl, loginLogoDarkUrl, loginCompanyName, loginImprintUrl, loginPrivacyPolicyUrl, loginWebsiteUrl, isLoading: configLoading, error: configError, autoSsoEnabled, embeddedMode: _embeddedMode, allowCustomJmapEndpoint, jmapServers, jmapServerAutoPickByDomain } = useConfig();
+  const { appName, jmapServerUrl: configuredServerUrl, oauthEnabled, oauthOnly, oauthClientId: globalOauthClientId, oauthIssuerUrl: globalOauthIssuerUrl, oauthScopes, devMode, demoMode, loginLogoLightUrl, loginLogoDarkUrl, loginCompanyName, loginImprintUrl, loginPrivacyPolicyUrl, loginWebsiteUrl, isLoading: configLoading, error: configError, autoSsoEnabled, embeddedMode: _embeddedMode, allowCustomJmapEndpoint, jmapServers, jmapServerAutoPickByDomain } = useConfig();
   const resolvedTheme = useThemeStore((s) => s.resolvedTheme);
 
-  const [formData, setFormData] = useState({
+  const [formData] = useState({
     username: "",
     password: "",
   });
   const [jmapEndpoint, setJmapEndpoint] = useState("");
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
-  const [domainAutoLocked, setDomainAutoLocked] = useState(false);
+  const [, setDomainAutoLocked] = useState(false);
 
   const hasServerList = jmapServers.length > 0;
   const selectedServer = hasServerList
@@ -173,18 +173,16 @@ export default function LoginPage() {
   const serverUrl = selectedServer?.url || configuredServerUrl;
   const effectiveOauthClientId = selectedServer?.oauth?.clientId || globalOauthClientId;
   const effectiveOauthIssuerUrl = selectedServer?.oauth?.issuerUrl || globalOauthIssuerUrl;
-  const [totpCode, setTotpCode] = useState("");
+  const [totpCode] = useState("");
   const [showTotpField, setShowTotpField] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
   const [shakeError, setShakeError] = useState(false);
   const [showThemeMenu, setShowThemeMenu] = useState(false);
 
   const [savedUsernames, setSavedUsernames] = useState<string[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [filteredSuggestions, setFilteredSuggestions] = useState<string[]>([]);
-  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
+  const [_showSuggestions, setShowSuggestions] = useState(false);
+  const [_filteredSuggestions, setFilteredSuggestions] = useState<string[]>([]);
+  const [_selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
   const [oauthMetadata, setOauthMetadata] = useState<OAuthMetadata | null>(null);
   const [oauthDiscoveryDone, setOauthDiscoveryDone] = useState(false);
   const XPR_AUTH_SERVICE_URL =
@@ -537,75 +535,6 @@ export default function LoginPage() {
     );
   }
 
-  const saveUsername = (username: string) => {
-    const saved = localStorage.getItem("webmail_usernames");
-    let usernames: string[] = [];
-
-    if (saved) {
-      try {
-        usernames = JSON.parse(saved);
-      } catch {
-        console.error("Failed to parse saved usernames");
-      }
-    }
-
-    if (!usernames.includes(username)) {
-      usernames = [username, ...usernames].slice(0, 5);
-      localStorage.setItem("webmail_usernames", JSON.stringify(usernames));
-      setSavedUsernames(usernames);
-    }
-  };
-
-  const removeUsername = (username: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const updated = savedUsernames.filter(u => u !== username);
-    localStorage.setItem("webmail_usernames", JSON.stringify(updated));
-    setSavedUsernames(updated);
-    setFilteredSuggestions(updated.filter(u =>
-      u.toLowerCase().includes(formData.username.toLowerCase())
-    ));
-  };
-
-  const handleUsernameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData({ ...formData, username: e.target.value });
-  };
-
-  const handleUsernameFocus = () => {
-    if (savedUsernames.length > 0 && formData.username === "") {
-      setFilteredSuggestions(savedUsernames);
-      setShowSuggestions(true);
-    } else if (filteredSuggestions.length > 0) {
-      setShowSuggestions(true);
-    }
-  };
-
-  const selectSuggestion = (username: string) => {
-    justSelectedSuggestion.current = true;
-    setFormData({ ...formData, username });
-    setShowSuggestions(false);
-    document.getElementById("password")?.focus();
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!showSuggestions || filteredSuggestions.length === 0) return;
-
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setSelectedSuggestionIndex(prev =>
-        prev < filteredSuggestions.length - 1 ? prev + 1 : prev
-      );
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setSelectedSuggestionIndex(prev => prev > 0 ? prev - 1 : -1);
-    } else if (e.key === "Enter" && selectedSuggestionIndex >= 0) {
-      e.preventDefault();
-      selectSuggestion(filteredSuggestions[selectedSuggestionIndex]);
-    } else if (e.key === "Escape") {
-      setShowSuggestions(false);
-      setSelectedSuggestionIndex(-1);
-    }
-  };
-
   const handleOAuthLogin = async () => {
     if (!oauthMetadata || !effectiveOauthClientId) return;
     // In mobile-handoff mode the client-side PKCE flow doesn't help us:
@@ -770,45 +699,6 @@ export default function LoginPage() {
       setXprError(err instanceof Error ? err.message : String(err));
     } finally {
       setXprLoading(false);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    // Server-list entries always win - `allowCustomJmapEndpoint` is only honored
-    // when the admin hasn't configured a server list.
-    const effectiveServerUrl = selectedServer?.url
-      || (allowCustomJmapEndpoint ? jmapEndpoint : serverUrl);
-    // Capture before login() so the isAuthenticated effect can build the
-    // deep-link fragment with values the user actually typed (formData may
-    // be cleared by the auth store on success).
-    if (isMobileHandoff) {
-      mobileHandoffPayloadRef.current = {
-        server_url: effectiveServerUrl,
-        username: formData.username,
-        password: formData.password,
-      };
-    }
-    const success = await login(
-      effectiveServerUrl,
-      formData.username,
-      formData.password,
-      totpCode || undefined,
-      rememberMe
-    );
-
-    if (success) {
-      saveUsername(formData.username);
-      if (isMobileHandoff) {
-        // The isAuthenticated effect handles the redirect; nothing else to
-        // do here. Don't push to / - that would race the deep link.
-        return;
-      }
-      router.push('/');
-    } else if (isMobileHandoff) {
-      // Stale payload should never feed into a later retry's redirect.
-      mobileHandoffPayloadRef.current = null;
     }
   };
 
