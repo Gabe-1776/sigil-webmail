@@ -129,15 +129,6 @@ export function GrantsDrawer() {
   const { isOpen, close } = useGrantsDrawerStore();
   const [showTour, setShowTour] = useState(false);
 
-  useEffect(() => {
-    if (!isOpen) { setShowTour(false); return; }
-    try {
-      if (localStorage.getItem(TOUR_KEY)) return;
-    } catch { return; }
-    const t = setTimeout(() => setShowTour(true), 400);
-    return () => clearTimeout(t);
-  }, [isOpen]);
-
   const dismissTour = () => {
     try { localStorage.setItem(TOUR_KEY, "1"); } catch { /* noop */ }
     setShowTour(false);
@@ -166,14 +157,24 @@ export function GrantsDrawer() {
         aria-modal
         aria-label="Authorization"
       >
-        <div className="flex items-center justify-end px-3 py-2 border-b border-border shrink-0">
-          <button
-            onClick={close}
-            className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-            aria-label="Close"
-          >
-            <X className="w-4 h-4" />
-          </button>
+        <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
+          <span className="text-sm font-semibold">Authorization</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowTour(true)}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              type="button"
+            >
+              How it works
+            </button>
+            <button
+              onClick={close}
+              className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              aria-label="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
         <div className="flex-1 overflow-hidden">
           <GrantsPage />
