@@ -59,13 +59,14 @@ function AuthTour({ onDone }: { onDone: () => void }) {
         role="dialog"
         aria-modal="true"
         style={{
-          background: "var(--background, white)",
-          border: "1px solid var(--border, #e5e7eb)",
+          background: "#ffffff",
+          border: "1px solid #e5e7eb",
           borderRadius: "16px",
           padding: "24px",
           maxWidth: "400px",
           width: "100%",
           boxShadow: "0 25px 50px rgba(0,0,0,0.3)",
+          color: "#111827",
         }}
       >
         <p
@@ -74,7 +75,7 @@ function AuthTour({ onDone }: { onDone: () => void }) {
             fontWeight: 600,
             textTransform: "uppercase",
             letterSpacing: "0.05em",
-            color: "var(--muted-foreground)",
+            color: "#6b7280",
             marginBottom: "12px",
           }}
         >
@@ -86,7 +87,7 @@ function AuthTour({ onDone }: { onDone: () => void }) {
         <p
           style={{
             fontSize: "14px",
-            color: "var(--muted-foreground)",
+            color: "#4b5563",
             lineHeight: 1.6,
             marginBottom: "20px",
           }}
@@ -98,7 +99,7 @@ function AuthTour({ onDone }: { onDone: () => void }) {
             onClick={onDone}
             style={{
               fontSize: "12px",
-              color: "var(--muted-foreground)",
+              color: "#6b7280",
               background: "none",
               border: "none",
               cursor: "pointer",
@@ -111,7 +112,7 @@ function AuthTour({ onDone }: { onDone: () => void }) {
             style={{
               fontSize: "14px",
               fontWeight: 500,
-              color: "var(--primary)",
+              color: "#2563eb",
               background: "none",
               border: "none",
               cursor: "pointer",
