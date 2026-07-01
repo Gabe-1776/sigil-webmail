@@ -78,7 +78,7 @@ function StatusBadge({ status }: { status: string }) {
 export default function GrantsPage() {
   const router = useRouter();
   const login = useAuthStore((s) => s.login);
-  const { jmapServerUrl } = useConfig();
+  const { jmapServerUrl, devMode } = useConfig();
 
   const [token, setToken] = useState<string | null>(null);
   const [actor, setActor] = useState<string | null>(null);
@@ -149,14 +149,14 @@ export default function GrantsPage() {
   useEffect(() => {
     const t = localStorage.getItem("sigil_auth_token");
     const a = localStorage.getItem("sigil_actor");
-    if (!t || !a) { router.push("/login"); return; }
+    if (!t || !a) { setLoading(false); return; }
     setToken(t);
     setActor(a);
     try {
       const payload = JSON.parse(atob(t.split(".")[1]));
       if (payload.exp) setTokenExpiresAt(new Date(payload.exp * 1000));
     } catch { /* non-fatal */ }
-  }, [router]);
+  }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -295,6 +295,20 @@ export default function GrantsPage() {
   };
 
   const incomingCount = incoming.length + incomingPm.length;
+
+  if (!actor && !loading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3 text-center px-8">
+        <ShieldCheck className="w-8 h-8 text-muted-foreground/40" />
+        <p className="text-sm font-medium">Agent grants</p>
+        <p className="text-xs text-muted-foreground">
+          {devMode
+            ? "Not available in dev mode — sign in with your XPR wallet on production to manage agent access."
+            : "Your session expired. Sign out and sign back in with your XPR wallet to continue."}
+        </p>
+      </div>
+    );
+  }
 
   if (!actor) {
     return (

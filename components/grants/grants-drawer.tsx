@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { X, MessageCircleQuestion } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { useGrantsDrawerStore } from "@/stores/grants-drawer-store";
@@ -136,6 +136,13 @@ export function GrantsDrawer() {
   };
 
   useEffect(() => {
+    if (!isOpen) { setShowTour(false); return; }
+    try { if (localStorage.getItem(TOUR_KEY)) return; } catch { return; }
+    const t = setTimeout(() => setShowTour(true), 400);
+    return () => clearTimeout(t);
+  }, [isOpen]);
+
+  useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !showTour) close(); };
     document.addEventListener("keydown", onKey);
@@ -163,9 +170,23 @@ export function GrantsDrawer() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowTour(true)}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
               type="button"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "5px",
+                background: "#34D6C2",
+                color: "#0a2926",
+                fontSize: "11px",
+                fontWeight: 700,
+                padding: "5px 10px",
+                borderRadius: "999px",
+                border: "none",
+                cursor: "pointer",
+                boxShadow: "0 2px 8px rgba(52,214,194,0.35)",
+              }}
             >
+              <MessageCircleQuestion className="w-3.5 h-3.5" />
               How it works
             </button>
             <button

@@ -709,6 +709,7 @@ export function Sidebar({
   const grantsDrawerOpen = useGrantsDrawerStore((s) => s.isOpen);
   const { sidebarCollapsed: isCollapsed, toggleSidebarCollapsed } = useUIStore();
   const { primaryIdentity: _primaryIdentity, activeAccountId } = useAuthStore();
+  const [showAgentHint, setShowAgentHint] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [foldersExpanded, setFoldersExpanded] = useState(() => {
     try {
@@ -774,6 +775,16 @@ export function Sidebar({
     (connectedAccounts.length > 1 || (includeGroupInUnified && hasGroupInboxes));
   const { unifiedCounts } = useEmailStore();
   const t = useTranslations('sidebar');
+
+  useEffect(() => {
+    try { if (localStorage.getItem("sigil_agent_hint_done")) return; } catch { return; }
+    const t = setTimeout(() => setShowAgentHint(true), 1500);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    if (grantsDrawerOpen) setShowAgentHint(false);
+  }, [grantsDrawerOpen]);
 
   useEffect(() => {
     const stored = localStorage.getItem('expandedMailboxes');
@@ -955,7 +966,7 @@ export function Sidebar({
     <div
       className={cn(
         "relative flex flex-col h-full border-r transition-all duration-300 overflow-hidden",
-        "bg-secondary border-border",
+        "bg-sidebar border-border",
         "max-lg:w-full",
         isCollapsed ? "lg:w-12" : "lg:w-full",
         className
@@ -1250,13 +1261,115 @@ export function Sidebar({
       </div>
 
       <div className="border-t border-border">
-        <SidebarRow
-          icon={<ShieldCheck className={cn("w-4 h-4 flex-shrink-0", grantsDrawerOpen ? "text-foreground" : "")} style={grantsDrawerOpen ? undefined : { color: "#34D6C2" }} />}
-          label="Authorization"
-          isSelected={grantsDrawerOpen}
-          onClick={openGrantsDrawer}
-          isCollapsed={isCollapsed}
-        />
+        <div className="relative">
+          {showAgentHint && !isCollapsed && (
+            <>
+              <style>{`
+                @keyframes sigilHintFloat {
+                  0%, 100% { transform: translateX(-50%) translateY(0px); }
+                  50% { transform: translateX(-50%) translateY(-5px); }
+                }
+              `}</style>
+              <div
+                role="dialog"
+                aria-label="AI agent management hint"
+                style={{
+                  position: "absolute",
+                  bottom: "calc(100% + 10px)",
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  background: "#34D6C2",
+                  color: "#0a2926",
+                  padding: "10px 12px 8px",
+                  borderRadius: "14px",
+                  whiteSpace: "nowrap",
+                  boxShadow: "0 4px 14px rgba(52,214,194,0.45)",
+                  animation: "sigilHintFloat 2.2s ease-in-out infinite",
+                  zIndex: 200,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setShowAgentHint(false)}
+                  aria-label="Dismiss"
+                  style={{
+                    position: "absolute",
+                    top: "3px",
+                    right: "3px",
+                    width: "16px",
+                    height: "16px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "#0a2926",
+                    opacity: 0.6,
+                  }}
+                >
+                  <X className="w-3 h-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowAgentHint(false); openGrantsDrawer(); }}
+                  style={{
+                    display: "block",
+                    fontSize: "11px",
+                    fontWeight: 700,
+                    letterSpacing: "0.01em",
+                    background: "none",
+                    border: "none",
+                    padding: 0,
+                    marginRight: "14px",
+                    cursor: "pointer",
+                    color: "#0a2926",
+                  }}
+                >
+                  AI agent management
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { try { localStorage.setItem("sigil_agent_hint_done", "1"); } catch { /* noop */ } setShowAgentHint(false); }}
+                  style={{
+                    display: "block",
+                    fontSize: "10px",
+                    fontWeight: 500,
+                    textDecoration: "underline",
+                    background: "none",
+                    border: "none",
+                    padding: 0,
+                    marginTop: "3px",
+                    cursor: "pointer",
+                    color: "#0a2926",
+                    opacity: 0.75,
+                  }}
+                >
+                  Don&apos;t show again
+                </button>
+                <span style={{
+                  position: "absolute",
+                  bottom: "-7px",
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  width: 0,
+                  height: 0,
+                  borderLeft: "7px solid transparent",
+                  borderRight: "7px solid transparent",
+                  borderTop: "7px solid #34D6C2",
+                  display: "block",
+                }} />
+              </div>
+            </>
+          )}
+          <SidebarRow
+            icon={<ShieldCheck className={cn("w-4 h-4 flex-shrink-0", grantsDrawerOpen ? "text-foreground" : "")} style={grantsDrawerOpen ? undefined : { color: "#34D6C2" }} />}
+            label="Authorization"
+            isSelected={grantsDrawerOpen}
+            onClick={openGrantsDrawer}
+            isCollapsed={isCollapsed}
+          />
+        </div>
         <a
           href="mailto:mailsigil@mailsigil.pro"
           className={cn("flex items-center w-full text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors border-t border-border border-l-2 border-l-transparent", isCollapsed ? "justify-center px-1" : "pr-2")}

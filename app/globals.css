@@ -202,6 +202,7 @@ body {
    (text-foreground, bg-accent, border-border, etc.) use light values
    inside the sidebar without touching individual classNames. */
 .sidebar-brand {
+  background: #0D1B5E !important;
   --color-foreground: #E2E8F0;
   --color-muted-foreground: #94A3B8;
   --color-border: rgba(255, 255, 255, 0.09);

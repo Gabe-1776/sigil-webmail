@@ -2544,7 +2544,7 @@ export default function Home() {
             <span>{tCommon('reconnecting')}</span>
           </div>
         )}
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 overflow-hidden max-lg:relative">
         {/* Desktop Navigation Rail (hidden when embedded inside Pro shell) */}
         {!isMobile && !isTablet && !isEmbedded && (
           <div className="w-14 bg-secondary flex flex-col flex-shrink-0" style={{ borderRight: '1px solid rgba(128, 128, 128, 0.3)' }}>
@@ -2575,7 +2575,7 @@ export default function Home() {
           <div
             className={cn(
               "inset-0 bg-black/50 z-40",
-              isEmbedded ? "absolute" : "fixed lg:hidden"
+              isEmbedded ? "absolute" : "absolute lg:hidden"
             )}
             onClick={() => setSidebarOpen(false)}
           />
@@ -2597,8 +2597,8 @@ export default function Home() {
                     )
                   : "relative translate-x-0")
               : cn(
-                  // Mobile/Tablet: fixed overlay
-                  "max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:w-72 max-lg:pt-[env(safe-area-inset-top)]",
+                  // Mobile/Tablet: absolute overlay (relative to flex container, stops above bottom nav)
+                  "max-lg:absolute max-lg:inset-y-0 max-lg:left-0 max-lg:w-72 max-lg:pt-[env(safe-area-inset-top)]",
                   "max-lg:transform max-lg:transition-transform max-lg:duration-300 max-lg:ease-in-out",
                   !sidebarOpen && "max-lg:-translate-x-full",
                   // Desktop: normal flow
