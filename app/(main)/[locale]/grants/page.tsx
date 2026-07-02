@@ -48,6 +48,21 @@ type PendingMailbox = {
 type LinkedAccounts = {
   ownedBy: string | null;
   ownedAgents: string[];
+  ownedAgentsDetailed: { actor: string; hasMailbox: boolean }[];
+};
+
+type Quota = {
+  owner: string;
+  agentMailboxes: { used: number; limit: number; purchasedSlots: number };
+  nextSlot: { priceUsd: number; purchaseEndpoint: string };
+};
+
+type QuotaInvoice = {
+  invoiceId: string;
+  payTo: string;
+  memo: string;
+  payOptions: { symbol: string; contract: string; quantity: string }[];
+  expiresAt: string;
 };
 
 type Section = "inbox" | "grants" | "incoming" | "issued";
@@ -95,6 +110,24 @@ export default function GrantsPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [quota, setQuota] = useState<Quota | null>(null);
+  // Per-agent buy-a-slot state — each unclaimed agent row runs its own
+  // independent invoice/payment lifecycle, keyed by agent actor. Replaces
+  // the old single global invoice/payState (which powered one standalone
+  // "Agent slots" card disconnected from any specific agent — the exact
+  // disconnect that let a $1 signing request fire with no real demand
+  // behind it, found live 2026-07-02).
+  type SlotPay = {
+    invoice: QuotaInvoice | null;
+    payToken: string;
+    payState: "idle" | "invoicing" | "paying" | "confirming" | "claiming" | "done" | "error";
+    payError: string;
+  };
+  const [slotPay, setSlotPay] = useState<Record<string, SlotPay>>({});
+  const getSlotPay = (agentActor: string): SlotPay =>
+    slotPay[agentActor] ?? { invoice: null, payToken: "XMD", payState: "idle", payError: "" };
+  const patchSlotPay = (agentActor: string, patch: Partial<SlotPay>) =>
+    setSlotPay((s) => ({ ...s, [agentActor]: { ...getSlotPay(agentActor), ...patch } }));
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -128,15 +161,17 @@ export default function GrantsPage() {
     if (!token) return;
     if (!background) setLoading(true);
     try {
-      const [linkedRes, incomingRes, issuedRes, acceptedRes, incomingPmRes, sentPmRes] = await Promise.all([
+      const [linkedRes, incomingRes, issuedRes, acceptedRes, incomingPmRes, sentPmRes, quotaRes] = await Promise.all([
         authFetch("/api/agentcore/linked"),
         authFetch("/api/grants/incoming"),
         authFetch("/api/grants/issued"),
         authFetch("/api/grants/accepted"),
         authFetch("/api/mailboxes/pending/incoming"),
         authFetch("/api/mailboxes/pending/sent"),
+        authFetch("/api/quota").catch(() => null),
       ]);
       if (linkedRes.ownedAgents) setLinked(linkedRes);
+      if (quotaRes?.ok) setQuota(quotaRes);
       setIncoming(incomingRes.grants ?? []);
       setIssued(issuedRes.grants ?? []);
       setAccepted(acceptedRes.grants ?? []);
@@ -221,6 +256,99 @@ export default function GrantsPage() {
       await loadAll();
       clearStatus(grantId);
     } catch { setStatus(grantId, "Error"); setTimeout(() => clearStatus(grantId), 3000); }
+  };
+
+  // ── Give a linked agent a Sigil mailbox — free (room in quota) or paid
+  //    ($1, on-chain) when it isn't. Both paths end at the same place:
+  //    claim-agent-mailbox, which does the real quota check server-side —
+  //    this is UI convenience, not the enforcement boundary.
+  const XPR_CHAIN_ID = "384da888112027f0321850a169f737c33e53b388aad48b5adace4bab97f437e0";
+  const XPR_ENDPOINTS = ["https://proton.eosusa.io", "https://proton.protonuk.io"];
+  const [claimedCreds, setClaimedCreds] = useState<Record<string, { username: string; password: string }>>({});
+
+  const claimAgentMailbox = async (agentActor: string): Promise<boolean> => {
+    const res = await authFetch("/api/grants/claim-agent-mailbox", {
+      method: "POST",
+      body: JSON.stringify({ agentActor }),
+    });
+    if (!res.ok) throw new Error(res.error || "failed to claim mailbox");
+    setClaimedCreds((c) => ({ ...c, [agentActor]: res.credential }));
+    return true;
+  };
+
+  // Free path — room already exists in quota.
+  const handleClaimAgentMailbox = async (agentActor: string) => {
+    const key = `claim-${agentActor}`;
+    setActionStatus((s) => ({ ...s, [key]: "Provisioning…" }));
+    try {
+      await claimAgentMailbox(agentActor);
+      setActionStatus((s) => ({ ...s, [key]: "Done" }));
+      loadAll(true); // refresh quota + linked list so the row moves to "has mailbox"
+    } catch (err: any) {
+      setActionStatus((s) => ({ ...s, [key]: err?.message ?? "failed" }));
+    }
+  };
+
+  // Paid path — buy the specific slot THIS agent needs, then auto-claim its
+  // mailbox the instant payment confirms (no separate second click — we
+  // already know exactly which agent the $1 was for). Row moves up to the
+  // "has mailbox" group once loadAll() re-partitions the list.
+  const handleBuySlotForAgent = async (agentActor: string) => {
+    patchSlotPay(agentActor, { payError: "" });
+    try {
+      let { invoice: inv, payToken } = getSlotPay(agentActor);
+      patchSlotPay(agentActor, { payState: "invoicing" });
+      if (!inv || new Date(inv.expiresAt) < new Date()) {
+        const res = await authFetch("/api/quota/invoice", { method: "POST" });
+        if (!res.ok) throw new Error(res.error || "invoice creation failed");
+        inv = res as QuotaInvoice;
+        patchSlotPay(agentActor, { invoice: inv });
+      }
+      const option = inv.payOptions.find((o) => o.symbol === payToken) ?? inv.payOptions[0];
+      if (!option) throw new Error("no payable token options available right now");
+
+      patchSlotPay(agentActor, { payState: "paying" });
+      const ProtonWebSDK = (await import("@proton/web-sdk")).default;
+      await import("@proton/link");
+      const sdkOpts = {
+        linkOptions: { chainId: XPR_CHAIN_ID, endpoints: XPR_ENDPOINTS },
+        transportOptions: { requestAccount: "mailsigil" },
+        selectorOptions: { appName: "Sigil Mail", enabledWalletTypes: ["webauth", "anchor", "proton"] as any },
+      };
+      let session = (await ProtonWebSDK({ ...sdkOpts, linkOptions: { ...sdkOpts.linkOptions, restoreSession: true } })).session;
+      if (!session) session = (await ProtonWebSDK(sdkOpts)).session;
+      if (!session) throw new Error("Wallet connection was cancelled");
+
+      await session.transact(
+        {
+          actions: [
+            {
+              account: option.contract,
+              name: "transfer",
+              authorization: [{ actor: session.auth.actor, permission: session.auth.permission }],
+              data: { from: session.auth.actor, to: inv.payTo, quantity: option.quantity, memo: inv.memo },
+            },
+          ],
+        },
+        { broadcast: true },
+      );
+
+      patchSlotPay(agentActor, { payState: "confirming" });
+      let paid = false;
+      for (let i = 0; i < 24; i++) {
+        await new Promise((r) => setTimeout(r, 5000));
+        const st = await authFetch(`/api/quota/invoice/${inv.invoiceId}`);
+        if (st.status === "paid") { paid = true; break; }
+      }
+      if (!paid) throw new Error("payment broadcast, but confirmation is taking longer than usual — refresh in a minute");
+
+      patchSlotPay(agentActor, { payState: "claiming", invoice: null });
+      await claimAgentMailbox(agentActor);
+      patchSlotPay(agentActor, { payState: "done" });
+      loadAll(true);
+    } catch (err: any) {
+      patchSlotPay(agentActor, { payError: err?.message ?? String(err), payState: "error" });
+    }
   };
 
   const handleOfferGrant = async (toActor: string) => {
@@ -485,18 +613,57 @@ export default function GrantsPage() {
           </div>
         )}
 
-        {/* ── Agent Wallets ── */}
+        {/* ── Agent Wallets ──
+            Redesigned 2026-07-02: no more standalone "Agent slots" card.
+            Every agentcore-linked agent gets its own row; unclaimed rows
+            carry their OWN claim-or-buy action, so a $1 signing request is
+            never disconnected from a specific agent that needs it (the bug
+            that let a real payment prompt fire with zero actual demand —
+            found live). Rows are grouped has-mailbox (top) then unclaimed
+            (below); a row moves to the top group the moment its mailbox is
+            claimed, free or paid. */}
         {activeSection === "grants" && (
           <div className="max-w-xl space-y-4">
-            <h1 className="text-lg font-semibold">Agent Wallets</h1>
-            {!linked || (linked.ownedAgents.length === 0 && !linked.ownedBy) ? (
-              <div className="rounded-lg border border-dashed border-border p-8 text-center text-muted-foreground text-sm">
-                <AlertCircle className="w-5 h-5 mx-auto mb-2 opacity-40" />
-                No agentcore-linked wallets found for <strong>{actor}</strong>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-semibold">Agent Wallets</h1>
+                <a
+                  href={`${AUTH_URL}/agent-wallets-guide.md`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs underline underline-offset-2 hover:opacity-80"
+                  style={{ color: "#34D6C2" }}
+                >
+                  How agent wallets works
+                </a>
               </div>
-            ) : (
+              {quota && (
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {quota.agentMailboxes.used} of {quota.agentMailboxes.limit} agent slots used
+                  {quota.agentMailboxes.purchasedSlots > 0 && ` (${quota.agentMailboxes.purchasedSlots} purchased)`}.
+                </p>
+              )}
+            </div>
+            {!linked || (linked.ownedAgents.length === 0 && !linked.ownedBy) ? (
+              <div className="rounded-lg border border-dashed border-border p-8 text-center text-muted-foreground text-sm space-y-1">
+                <AlertCircle className="w-5 h-5 mx-auto mb-2 opacity-40" />
+                <p>No agentcore-linked wallets found for <strong>{actor}</strong></p>
+                <p className="text-xs">
+                  Link an AI agent to your wallet via agentcore first — once one's linked, you can give it a
+                  Sigil mailbox (your first is free; paid slots unlock more).
+                </p>
+              </div>
+            ) : (() => {
+              const withMailbox = linked.ownedAgentsDetailed.filter((a) => a.hasMailbox);
+              const unclaimed = linked.ownedAgentsDetailed.filter((a) => !a.hasMailbox);
+              // Allocate remaining free capacity across unclaimed rows in
+              // order — only that many rows get "Claim (free)"; the rest
+              // get "Buy a slot" attached to that exact row.
+              let remainingCapacity = quota ? quota.agentMailboxes.limit - quota.agentMailboxes.used : 0;
+
+              return (
               <div className="space-y-2">
-                {linked.ownedAgents.map((agentActor) => {
+                {withMailbox.map(({ actor: agentActor }) => {
                   const offerKey = `offer-${agentActor}`;
                   const liveGrant = issued.find(g => g.grantee_actor === agentActor && (g.status === "pending" || g.status === "accepted"));
                   const isSending = actionStatus[offerKey] === "Sending…";
@@ -528,6 +695,102 @@ export default function GrantsPage() {
                     </div>
                   );
                 })}
+
+                {unclaimed.map(({ actor: agentActor }) => {
+                  const claimKey = `claim-${agentActor}`;
+                  const isClaiming = actionStatus[claimKey] === "Provisioning…";
+                  const claimStatus = actionStatus[claimKey];
+                  const cred = claimedCreds[agentActor];
+                  const canClaimFree = remainingCapacity > 0;
+                  if (canClaimFree) remainingCapacity -= 1; // this row consumes one slot of capacity
+
+                  const sp = getSlotPay(agentActor);
+                  const paying = sp.payState === "invoicing" || sp.payState === "paying" || sp.payState === "confirming" || sp.payState === "claiming";
+
+                  return (
+                    <div key={agentActor} className="rounded-lg border border-border bg-card p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium">{agentActor}</p>
+                          <p className="text-xs text-muted-foreground">Linked agent — no Sigil mailbox yet</p>
+                        </div>
+                        {cred ? (
+                          <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                            <Check className="w-3 h-3" /> Mailbox created
+                          </span>
+                        ) : canClaimFree ? (
+                          <Button
+                            size="sm"
+                            onClick={() => handleClaimAgentMailbox(agentActor)}
+                            disabled={isClaiming}
+                            className="text-xs bg-[#34D6C2] hover:bg-[#2bc0ae] text-black shrink-0"
+                          >
+                            {isClaiming ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Provisioning…</>) : "Claim"}
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            onClick={() => handleBuySlotForAgent(agentActor)}
+                            disabled={paying}
+                            className="text-xs bg-[#34D6C2] hover:bg-[#2bc0ae] text-black shrink-0"
+                          >
+                            {sp.payState === "invoicing" ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Quoting…</>)
+                              : sp.payState === "paying" ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Sign in wallet…</>)
+                              : sp.payState === "confirming" ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Confirming on-chain…</>)
+                              : sp.payState === "claiming" ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Provisioning…</>)
+                              : `Add a slot — $1 · Pay with XPR Network`}
+                          </Button>
+                        )}
+                      </div>
+
+                      {cred && (
+                        <div className="rounded-md bg-emerald-500/10 border border-emerald-500/30 px-3 py-2 space-y-1">
+                          <p className="text-xs text-muted-foreground">{agentActor}@mailsigil.pro is ready. Share this credential with the agent:</p>
+                          <p className="font-mono text-xs bg-muted px-2 py-1 rounded break-all">{cred.username} / {cred.password}</p>
+                        </div>
+                      )}
+                      {claimStatus && claimStatus !== "Provisioning…" && claimStatus !== "Done" && (
+                        <p className="text-xs text-destructive">{claimStatus}</p>
+                      )}
+
+                      {!cred && !canClaimFree && (
+                        <>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Pay in</span>
+                            {["XMD", "XUSDC", "XPR", "LOAN"].map((sym) => (
+                              <button
+                                key={sym}
+                                onClick={() => patchSlotPay(agentActor, { payToken: sym })}
+                                className={cn(
+                                  "text-[11px] font-medium px-2 py-0.5 rounded-full border transition-colors",
+                                  sp.payToken === sym
+                                    ? "border-[#34D6C2] bg-[#34D6C2]/15 text-[#0e8f80] dark:text-[#34D6C2]"
+                                    : "border-border text-muted-foreground hover:border-[#34D6C2]/50",
+                                )}
+                              >
+                                {sym}
+                              </button>
+                            ))}
+                          </div>
+                          {sp.invoice && (
+                            <p className="text-[11px] text-muted-foreground">
+                              Or pay manually from any wallet: send{" "}
+                              <span className="font-mono text-foreground">
+                                {(sp.invoice.payOptions.find((o) => o.symbol === sp.payToken) ?? sp.invoice.payOptions[0])?.quantity}
+                              </span>{" "}
+                              to <span className="font-mono text-foreground">{sp.invoice.payTo}</span> with memo{" "}
+                              <span className="font-mono text-foreground">{sp.invoice.memo}</span>
+                            </p>
+                          )}
+                          {sp.payState === "error" && sp.payError && (
+                            <p className="text-xs text-destructive">{sp.payError}</p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+
                 {linked.ownedBy && (
                   <div className="rounded-lg border border-border bg-card p-4">
                     <div className="flex items-start justify-between gap-3">
@@ -542,7 +805,8 @@ export default function GrantsPage() {
                   </div>
                 )}
               </div>
-            )}
+              );
+            })()}
           </div>
         )}
 

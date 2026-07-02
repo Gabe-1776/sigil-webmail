@@ -663,6 +663,23 @@ export default function LoginPage() {
         throw new Error(verifyRes.error || "Wallet signature verification failed");
       }
 
+      // Upload the wallet's serialized channel session (fire-and-forget).
+      // This is what lets the backend send NATIVE WebAuth signing prompts
+      // later (mailbox-approval requests) instead of the 0.0001 XPR
+      // transfer-with-a-link-in-the-memo workaround. Only channel-type
+      // sessions (mobile/QR logins) can receive pushes — the desktop popup
+      // yields a fallback session, which the server rejects harmlessly.
+      try {
+        const serialized = (session as any).serialize?.();
+        if (serialized?.type === "channel") {
+          fetch(`${XPR_AUTH_SERVICE_URL}/api/session-channel`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${verifyRes.accessToken}` },
+            body: JSON.stringify({ session: serialized }),
+          }).catch(() => { /* non-fatal — transfer fallback still works */ });
+        }
+      } catch { /* non-fatal */ }
+
       setXprStatus(t("xpr_minting_credential") || "Setting up your mailbox access…");
       const appPasswordRes = await fetch(`${XPR_AUTH_SERVICE_URL}/api/auth/app-password`, {
         method: "POST",

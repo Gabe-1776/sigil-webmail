@@ -16,6 +16,7 @@ type PendingInfo = {
   pendingId: string;
   initiatedBy: string;
   forActor: string;
+  confirmerActor: string;
   mailbox: string;
   expiresAt: string;
 };
@@ -30,7 +31,7 @@ type Stage =
   | { type: "signing"; actor: string }
   | { type: "confirming" }
   | { type: "logging-in" }
-  | { type: "success"; mailbox: string }
+  | { type: "success"; mailbox: string; loggedIn: boolean }
   | { type: "error"; message: string };
 
 function isMobileDevice() {
@@ -130,6 +131,19 @@ export default function ConfirmPage() {
         accessToken = res.accessToken;
       }
 
+      // Upload the wallet's serialized channel session (fire-and-forget) so
+      // future approvals can arrive as native WebAuth prompts — see login page.
+      try {
+        const serialized = (session as any).serialize?.();
+        if (serialized?.type === "channel") {
+          fetch(`${AUTH_URL}/api/session-channel`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+            body: JSON.stringify({ session: serialized }),
+          }).catch(() => { /* non-fatal */ });
+        }
+      } catch { /* non-fatal */ }
+
       // Confirm the pending request — provisions mailbox + issues initiator credential
       setStage({ type: "confirming" });
       const confirmRes = await fetch(`${AUTH_URL}/api/mailboxes/pending/${encodeURIComponent(pendingId)}/confirm`, {
@@ -138,6 +152,16 @@ export default function ConfirmPage() {
       }).then((r) => r.json());
 
       if (!confirmRes.ok) throw new Error(confirmRes.error || "Confirmation failed");
+
+      // Sibling-agent flow: the confirmer isn't the mailbox's owner (they
+      // approved a mailbox for a linked agent, not themselves), so there's
+      // no access token to log in with — the confirm endpoint intentionally
+      // omits it. Just show the approval as done; the initiator retrieves
+      // the new mailbox's credential from their own "sent requests" list.
+      if (!confirmRes.accessToken) {
+        setStage({ type: "success", mailbox: confirmRes.mailbox, loggedIn: false });
+        return;
+      }
 
       // Mint app-password using the access token from confirm (already provisioned)
       setStage({ type: "logging-in" });
@@ -149,7 +173,7 @@ export default function ConfirmPage() {
 
       if (!appPwRes.username || !appPwRes.password) {
         // Success even if auto-login fails — user can login manually
-        setStage({ type: "success", mailbox: confirmRes.mailbox });
+        setStage({ type: "success", mailbox: confirmRes.mailbox, loggedIn: false });
         return;
       }
 
@@ -160,7 +184,7 @@ export default function ConfirmPage() {
         localStorage.setItem("sigil_actor", actor);
         router.push("/");
       } else {
-        setStage({ type: "success", mailbox: confirmRes.mailbox });
+        setStage({ type: "success", mailbox: confirmRes.mailbox, loggedIn: false });
       }
     } catch (err) {
       const prev = stage;
@@ -247,9 +271,14 @@ function ConfirmContent({
     return (
       <>
         <CheckCircle className="h-10 w-10 text-emerald-500" />
-        <h2 className="text-xl font-semibold">Your account is ready</h2>
+        <h2 className="text-xl font-semibold">{stage.loggedIn === false ? "Approved" : "Your account is ready"}</h2>
         <p className="font-mono text-sm bg-muted px-3 py-1.5 rounded-md">{stage.mailbox}</p>
-        <Button onClick={() => router.push("/login")} className="w-full">Open Sigil Mail</Button>
+        {stage.loggedIn === false ? (
+          <p className="text-sm text-muted-foreground">This mailbox is ready — the agent that requested it will pick up its credential automatically.</p>
+        ) : null}
+        <Button onClick={() => router.push("/login")} className="w-full">
+          {stage.loggedIn === false ? "Back to Sigil Mail" : "Open Sigil Mail"}
+        </Button>
       </>
     );
   }
@@ -283,19 +312,33 @@ function ConfirmContent({
   // stage.type === "ready"
   const { info } = stage;
   const mobile = isMobileDevice();
+  // Sibling-agent flow: the confirmer approves a mailbox for a DIFFERENT
+  // agent, not themselves — the copy and the wallet being connected differ.
+  const approvingForSomeoneElse = info.confirmerActor !== info.forActor;
   return (
     <>
       <div className="rounded-full bg-primary/10 p-3">
         <Mail className="h-8 w-8 text-primary" />
       </div>
       <div className="space-y-1">
-        <h2 className="text-xl font-semibold">Account creation request</h2>
+        <h2 className="text-xl font-semibold">
+          {approvingForSomeoneElse ? "Approval needed" : "Account creation request"}
+        </h2>
         <p className="text-sm text-muted-foreground">
-          <span className="font-medium text-foreground">{info.initiatedBy}</span> wants to create a Sigil Mail account for you
+          {approvingForSomeoneElse ? (
+            <>
+              <span className="font-medium text-foreground">{info.initiatedBy}</span> wants to create a Sigil Mail account
+              for your linked agent <span className="font-medium text-foreground">{info.forActor}</span> — approve as its owner
+            </>
+          ) : (
+            <>
+              <span className="font-medium text-foreground">{info.initiatedBy}</span> wants to create a Sigil Mail account for you
+            </>
+          )}
         </p>
       </div>
       <div className="w-full rounded-lg border bg-muted/40 px-4 py-3 text-left space-y-2">
-        <Row label="Your address" value={info.mailbox} mono />
+        <Row label={approvingForSomeoneElse ? "Mailbox for" : "Your address"} value={info.mailbox} mono />
         <Row label="Requested by" value={info.initiatedBy} />
         <Row label="Expires" value={new Date(info.expiresAt).toLocaleDateString()} />
       </div>
@@ -316,7 +359,7 @@ function ConfirmContent({
           </Button>
         )}
         <p className="text-xs text-muted-foreground">
-          You'll be asked to connect your <span className="font-medium">{info.forActor}</span> wallet to approve this request.
+          You'll be asked to connect your <span className="font-medium">{info.confirmerActor}</span> wallet to approve this request.
           No XPR will be spent.
         </p>
       </div>
