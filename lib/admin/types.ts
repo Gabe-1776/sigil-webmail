@@ -80,7 +80,7 @@ export const DEFAULT_FEATURE_GATES: FeatureGates = {
   calendarTasksEnabled: true,
   smimeEnabled: true,
   externalContentEnabled: true,
-  debugModeEnabled: true,
+  debugModeEnabled: false,  // off by default — admins enable per-deployment via /api/admin/policy
   folderIconsEnabled: true,
   hoverActionsConfigEnabled: true,
   filesEnabled: true,

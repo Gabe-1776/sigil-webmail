@@ -7,6 +7,7 @@ import { getCookieOptions } from '@/lib/oauth/cookie-config';
 import { createPairing } from '@/lib/auth/pairing-store';
 import { hasValidPairReauth } from '@/lib/auth/pair-reauth';
 import { MAX_ACCOUNT_SLOTS } from '@/lib/account-utils';
+import { redactOAuthErrorBodyForLogging } from '@/lib/oauth/redact';
 
 // Desktop side of the cross-device QR login. The caller must be a signed-in
 // webmail session (its refresh token lives in the httpOnly jmap_rt cookie). We
@@ -54,7 +55,8 @@ export async function POST(request: NextRequest) {
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
-      logger.warn('Pair create: refresh failed', { status: tokenResponse.status, error: errorText });
+      // Don't log the raw upstream body — see lib/oauth/redact.ts.
+      logger.warn('Pair create: refresh failed', redactOAuthErrorBodyForLogging(errorText, tokenResponse.status));
       // Stale session — clear the dead cookie so the user is prompted to log
       // back in, mirroring the token route's behaviour.
       cookieStore.delete(cookieName);

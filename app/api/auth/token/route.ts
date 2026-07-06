@@ -5,6 +5,7 @@ import { refreshTokenCookieName, refreshTokenServerCookieName } from '@/lib/oaut
 import { exchangeCodeForTokens, buildOAuthParams, getMetadata, getTokenEndpoint } from '@/lib/oauth/token-exchange';
 import { getCookieOptions } from '@/lib/oauth/cookie-config';
 import { MAX_ACCOUNT_SLOTS } from '@/lib/account-utils';
+import { redactOAuthErrorBodyForLogging, redactTokenResponseForLogging } from '@/lib/oauth/redact';
 
 function getSlot(request: NextRequest): number {
   const raw = request.nextUrl.searchParams.get('slot');
@@ -81,7 +82,8 @@ export async function PUT(request: NextRequest) {
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
-      logger.error('Token refresh failed', { status: tokenResponse.status, error: errorText });
+      // Don't log the raw upstream body — see lib/oauth/redact.ts.
+      logger.error('Token refresh failed', redactOAuthErrorBodyForLogging(errorText, tokenResponse.status));
       cookieStore.delete(cookieName);
       cookieStore.delete(refreshTokenServerCookieName(slot));
       return NextResponse.json({ error: 'Refresh failed' }, { status: 401 });
@@ -90,7 +92,9 @@ export async function PUT(request: NextRequest) {
     const tokens = await tokenResponse.json();
 
     if (!tokens.access_token) {
-      logger.error('Refresh response missing access_token', { response: JSON.stringify(tokens).substring(0, 500) });
+      // Don't log the full response body — it can include refresh_token,
+      // id_token, and other bearer credentials. Log only safe metadata.
+      logger.error('Refresh response missing access_token', redactTokenResponseForLogging(tokens));
       return NextResponse.json({ error: 'Invalid token response' }, { status: 502 });
     }
 

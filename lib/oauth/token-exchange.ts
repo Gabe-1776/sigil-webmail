@@ -5,6 +5,7 @@ import { isPublicHttpUrl } from '@/lib/security/url-guard';
 import { readFileEnv } from '@/lib/read-file-env';
 import { configManager } from '@/lib/admin/config-manager';
 import { parseJmapServers, findServerById } from '@/lib/admin/jmap-servers';
+import { redactOAuthErrorBodyForLogging, redactTokenResponseForLogging } from '@/lib/oauth/redact';
 
 // SSRF guard for OAuth discovery. When `oauthAllowPrivateEndpoints` is set,
 // the admin opts in to discovery resolving to RFC-1918 / loopback hosts —
@@ -114,14 +115,18 @@ export async function exchangeCodeForTokens(
 
   if (!tokenResponse.ok) {
     const errorText = await tokenResponse.text();
-    logger.error('Token exchange failed', { status: tokenResponse.status, error: errorText });
+    // Don't log the raw upstream body — see lib/oauth/redact.ts.
+    logger.error('Token exchange failed', redactOAuthErrorBodyForLogging(errorText, tokenResponse.status));
     throw new Error('Token exchange failed');
   }
 
   const tokens = await tokenResponse.json();
 
   if (!tokens.access_token) {
-    logger.error('Token response missing access_token', { response: JSON.stringify(tokens).substring(0, 500) });
+    // Don't log the full response body — it can include refresh_token,
+    // id_token, and other bearer credentials. Log only safe metadata.
+    // (Same fix as app/api/auth/token/route.ts's refresh-token path.)
+    logger.error('Token response missing access_token', redactTokenResponseForLogging(tokens));
     throw new Error('Invalid token response');
   }
 

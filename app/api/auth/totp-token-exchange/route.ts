@@ -11,6 +11,7 @@ import { isPublicHttpUrl } from '@/lib/security/url-guard';
 import { recordLogin } from '@/lib/telemetry/login-tracker';
 import { parseJmapServers, findServerByUrl, findServerById } from '@/lib/admin/jmap-servers';
 import { MAX_ACCOUNT_SLOTS } from '@/lib/account-utils';
+import { redactOAuthErrorBodyForLogging } from '@/lib/oauth/redact';
 
 /**
  * Exchange basic auth credentials (with TOTP appended) for OAuth tokens.
@@ -39,7 +40,14 @@ async function tryTokenRequest(
 
     if (!response.ok) {
       const errorText = await response.text();
-      return { ok: false, status: response.status, error: errorText.substring(0, 500) };
+      // Don't carry the raw upstream body forward — it ends up in `attempts`,
+      // which is both logged AND (until this fix) returned to the client.
+      // See lib/oauth/redact.ts.
+      return {
+        ok: false,
+        status: response.status,
+        error: JSON.stringify(redactOAuthErrorBodyForLogging(errorText, response.status)),
+      };
     }
 
     const tokens = await response.json();
@@ -217,11 +225,16 @@ async function attemptAllStrategies(
     attempts.push({ strategy: 'client_credentials + Basic Auth', error: result.error });
   }
 
+  // `attempts[i].error` is a redacted-but-still-diagnostic JSON string (see
+  // tryTokenRequest above) — fine to log, but the client gets strategy names
+  // only. The frontend caller (stores/auth-store.ts) only debug-logs this
+  // response and falls back to TOTP re-auth regardless of its exact shape,
+  // so dropping the error detail from the client response is safe.
   logger.warn('TOTP token exchange: all strategies failed', { attempts });
   return NextResponse.json({
     error: 'token_exchange_failed',
     detail: 'All token exchange strategies failed',
-    attempts,
+    attemptedStrategies: attempts.map((a) => a.strategy),
   }, { status: 502 });
 }
 

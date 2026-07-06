@@ -3,11 +3,19 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 export class ImpersonationJwtError extends Error {
   status: number;
   code: string;
-  constructor(code: string, message: string, status: number = 401) {
+  /**
+   * Internal-only detail — may include claim/header values or other
+   * attacker-influenced input. Safe to log server-side; NEVER return it to
+   * the HTTP caller (only `message` is safe for that — see callers of
+   * verifyImpersonationJwt).
+   */
+  detail?: string;
+  constructor(code: string, message: string, status: number = 401, detail?: string) {
     super(message);
     this.name = 'ImpersonationJwtError';
     this.code = code;
     this.status = status;
+    this.detail = detail;
   }
 }
 
@@ -42,14 +50,18 @@ function parseSegment(segment: string): unknown {
 
 function assertString(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.length === 0) {
-    throw new ImpersonationJwtError('claims', `Missing or invalid '${field}' claim`);
+    // Don't echo the field name back in the PUBLIC message — it's an
+    // internal claim name and would help an attacker reverse-engineer the
+    // JWT structure. It's still useful for server-side debugging, so it
+    // goes in `detail` (log-only, never returned to the caller).
+    throw new ImpersonationJwtError('claims', 'Missing or invalid claim', 401, `Missing or invalid '${field}' claim`);
   }
   return value;
 }
 
 function assertNumber(value: unknown, field: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new ImpersonationJwtError('claims', `Missing or invalid '${field}' claim`);
+    throw new ImpersonationJwtError('claims', 'Missing or invalid claim', 401, `Missing or invalid '${field}' claim`);
   }
   return value;
 }
@@ -85,10 +97,12 @@ export function verifyImpersonationJwt(
   // Header - reject anything but HS256 BEFORE attempting signature verification.
   const header = parseSegment(headerB64) as Record<string, unknown>;
   if (header.alg !== 'HS256') {
-    throw new ImpersonationJwtError('alg', `Unsupported alg '${String(header.alg)}'`);
+    // Don't echo the attacker-supplied alg/typ value in the public message —
+    // same reasoning as assertString/assertNumber above.
+    throw new ImpersonationJwtError('alg', 'Unsupported algorithm', 401, `Unsupported alg '${String(header.alg)}'`);
   }
   if (header.typ !== undefined && header.typ !== 'JWT') {
-    throw new ImpersonationJwtError('alg', `Unsupported typ '${String(header.typ)}'`);
+    throw new ImpersonationJwtError('alg', 'Unsupported token type', 401, `Unsupported typ '${String(header.typ)}'`);
   }
 
   // Signature - constant-time compare.
@@ -102,7 +116,9 @@ export function verifyImpersonationJwt(
   const payload = parseSegment(payloadB64) as Record<string, unknown>;
   const iss = assertString(payload.iss, 'iss');
   if (options.expectedIssuer && iss !== options.expectedIssuer) {
-    throw new ImpersonationJwtError('iss', `Unexpected issuer '${iss}'`);
+    // Don't echo the claim value in the public message — it's exactly the
+    // kind of leak the field-name redaction above was meant to prevent.
+    throw new ImpersonationJwtError('iss', 'Unexpected issuer', 401, `Unexpected issuer '${iss}'`);
   }
   const iat = assertNumber(payload.iat, 'iat');
   const exp = assertNumber(payload.exp, 'exp');

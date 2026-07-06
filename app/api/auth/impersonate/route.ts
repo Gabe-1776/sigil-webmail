@@ -64,7 +64,10 @@ export async function GET(request: NextRequest) {
     });
   } catch (err) {
     if (err instanceof ImpersonationJwtError) {
-      logger.warn('Impersonation JWT rejected', { code: err.code });
+      // `err.detail` may carry claim/header values from the request — log it
+      // for debugging, but only `err.message` (always a safe generic string)
+      // goes back to the caller.
+      logger.warn('Impersonation JWT rejected', { code: err.code, detail: err.detail });
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
     logger.error('Impersonation JWT error', {
