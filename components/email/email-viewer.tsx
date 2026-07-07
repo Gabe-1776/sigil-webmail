@@ -999,6 +999,7 @@ export function EmailViewer({
     return new Date(time).toISOString();
   }, [client, t, tComposer]);
   const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
+  const isSigilTheme = useThemeStore((state) => state.theme === 'sigil');
   const { startTour } = useTour();
   const isEmbedded = useIsEmbedded();
   const [showFullHeaders, setShowFullHeaders] = useState(false);
@@ -5484,9 +5485,14 @@ export function EmailViewer({
           {/* Email Body */}
           <div className={cn(
             "email-content-wrapper overflow-x-auto",
-            !isDark && resolvedTheme === 'dark' ? "bg-white email-content-light" : "bg-background"
+            // isSigilTheme must also check isDark here, same as the style
+            // prop's guard below — otherwise a per-email/global light-mode
+            // override still gets forced into the dark navy background.
+            isSigilTheme && isDark
+              ? "bg-[#1E3A8A]"
+              : (!isDark && resolvedTheme === 'dark' ? "bg-white email-content-light" : "bg-background")
           )}
-          style={isDark ? { backgroundColor: '#121212' } : undefined}>
+          style={isDark && !isSigilTheme ? { backgroundColor: '#121212' } : undefined}>
             {isBodyLoading ? (
               <div
                 className="space-y-3 px-6 py-4 animate-pulse"

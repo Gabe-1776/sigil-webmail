@@ -454,8 +454,45 @@ export default function GrantsPage() {
   ];
 
   return (
-    <div className="flex h-full overflow-hidden bg-background">
-      <aside className="w-52 shrink-0 border-r border-border flex flex-col py-4 gap-1">
+    <div className="flex flex-col md:flex-row h-full overflow-hidden bg-background">
+      {/* Mobile: horizontal tab bar at top */}
+      <nav className="md:hidden flex overflow-x-auto border-b border-border bg-background shrink-0">
+        <div className="flex items-center gap-1 px-2 py-2 shrink-0">
+          <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: "#34D6C2" }} />
+          <span className="font-semibold text-sm whitespace-nowrap">Authorization</span>
+        </div>
+        <div className="flex items-stretch">
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setActiveSection(item.id)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-2 text-sm whitespace-nowrap border-b-2 transition-colors",
+                activeSection === item.id
+                  ? "border-primary text-foreground font-medium"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <span>{item.label}</span>
+              {item.badge !== undefined && (
+                <span className="text-[10px] bg-primary text-primary-foreground rounded-full min-w-[16px] h-[16px] flex items-center justify-center px-1">
+                  {item.badge}
+                </span>
+              )}
+            </button>
+          ))}
+          <button
+            onClick={() => loadAll()}
+            className="flex items-center gap-1 px-3 py-2 text-xs text-muted-foreground hover:text-foreground border-b-2 border-transparent"
+          >
+            <RefreshCw className={cn("w-3 h-3", loading && "animate-spin")} />
+            Refresh
+          </button>
+        </div>
+      </nav>
+
+      {/* Desktop: left sidebar */}
+      <aside className="hidden md:flex w-52 shrink-0 border-r border-border flex-col py-4 gap-1">
         <div className="px-4 pb-3 flex items-center gap-2 border-b border-border mb-1">
           <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: "#34D6C2" }} />
           <span className="font-semibold text-sm">Authorization</span>
