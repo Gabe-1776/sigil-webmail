@@ -733,7 +733,9 @@ export default function LoginPage() {
     setDemoLoading(false);
   };
 
-  const currentThemeOption = THEME_OPTIONS.find(o => o.value === theme) || THEME_OPTIONS[2];
+  // Fallback (only reachable if `theme` somehow isn't one of the 4 known
+  // values) is Sigil, not System — matches the store's own default.
+  const currentThemeOption = THEME_OPTIONS.find(o => o.value === theme) || THEME_OPTIONS[3];
   const CurrentThemeIcon = currentThemeOption.icon;
 
   // Demo-only mode: show only a large demo login button

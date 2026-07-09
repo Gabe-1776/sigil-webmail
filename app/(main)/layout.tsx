@@ -97,9 +97,18 @@ export default async function RootLayout({
               (function() {
                 try {
                   const stored = localStorage.getItem('theme-storage');
-                  const theme = stored ? JSON.parse(stored).state.theme : 'system';
+                  // Default (nothing persisted yet, e.g. brand-new browser/
+                  // first login) must match the theme store's own default
+                  // ('sigil', see stores/theme-store.ts) — this used to fall
+                  // back to 'system', so the very first paint (and every
+                  // later paint for a user who kept 'sigil') briefly showed
+                  // unstyled/system-resolved theme before React corrected it.
+                  const theme = stored ? JSON.parse(stored).state.theme : 'sigil';
                   const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-                  const resolved = theme === 'system' ? systemTheme : theme;
+                  // 'sigil' always resolves dark (mirrors resolveTheme() in
+                  // theme-store.ts) — without this, the 'sigil' string itself
+                  // got added as a bogus CSS class instead of 'dark'.
+                  const resolved = theme === 'system' ? systemTheme : (theme === 'sigil' ? 'dark' : theme);
                   document.documentElement.classList.remove('light', 'dark');
                   document.documentElement.classList.add(resolved);
                 } catch (e) {
