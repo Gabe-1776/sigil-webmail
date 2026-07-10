@@ -4,11 +4,10 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import QRCode from 'qrcode';
-import * as OTPAuth from 'otpauth';
-import { Shield, Key, Smartphone, Lock, Trash2, Plus, Eye, EyeOff, Copy, Check, Loader2, Monitor, Terminal, QrCode } from 'lucide-react';
+import { Smartphone, Lock, Trash2, Plus, Copy, Check, Loader2, Monitor, Terminal, QrCode } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { SettingsSection, SettingItem, ToggleSwitch } from './settings-section';
+import { SettingsSection, SettingItem } from './settings-section';
 import { useAccountSecurityStore, type AppPasswordInfo, type ApiKeyInfo, type AppCredentialInput } from '@/stores/account-security-store';
 import { useAuthStore } from '@/stores/auth-store';
 import { useAccountStore } from '@/stores/account-store';
@@ -16,117 +15,6 @@ import { apiFetch, getPathPrefix } from '@/lib/browser-navigation';
 import { toast } from '@/stores/toast-store';
 import { cn } from '@/lib/utils';
 import { sanitizeI18nHtml } from '@/lib/email-sanitization';
-
-function PasswordChangeSection() {
-  const t = useTranslations('settings.security');
-  const { changePassword, isSaving } = useAccountSecurityStore();
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showCurrent, setShowCurrent] = useState(false);
-  const [showNew, setShowNew] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-
-    if (newPassword.length < 8) {
-      setError(t('password.error_min_length'));
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setError(t('password.error_mismatch'));
-      return;
-    }
-
-    try {
-      await changePassword(currentPassword, newPassword);
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-      toast.success(t('password.success'));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : t('password.error_generic');
-      setError(msg);
-      toast.error(t('password.error_title'), msg);
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2 mb-2">
-        <Key className="w-4 h-4 text-muted-foreground" />
-        <h4 className="text-sm font-medium text-foreground">{t('password.title')}</h4>
-      </div>
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">{t('password.current')}</label>
-          <div className="relative">
-            <Input
-              type={showCurrent ? 'text' : 'password'}
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              required
-              autoComplete="current-password"
-              className="pr-10"
-            />
-            <button
-              type="button"
-              onClick={() => setShowCurrent(!showCurrent)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            >
-              {showCurrent ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            </button>
-          </div>
-        </div>
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">{t('password.new')}</label>
-          <div className="relative">
-            <Input
-              type={showNew ? 'text' : 'password'}
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              required
-              minLength={8}
-              autoComplete="new-password"
-              className="pr-10"
-            />
-            <button
-              type="button"
-              onClick={() => setShowNew(!showNew)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            >
-              {showNew ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            </button>
-          </div>
-        </div>
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">{t('password.confirm')}</label>
-          <Input
-            type="password"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            required
-            minLength={8}
-            autoComplete="new-password"
-          />
-        </div>
-        {error && (
-          <p className="text-xs text-destructive">{error}</p>
-        )}
-        <Button
-          type="submit"
-          size="sm"
-          disabled={isSaving || !currentPassword || !newPassword || !confirmPassword}
-        >
-          {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-          {t('password.submit')}
-        </Button>
-      </form>
-    </div>
-  );
-}
 
 function DisplayNameSection() {
   const t = useTranslations('settings.security');
@@ -175,177 +63,6 @@ function DisplayNameSection() {
         </Button>
       </div>
     </SettingItem>
-  );
-}
-
-function generateTotp(accountLabel: string): { totp: OTPAuth.TOTP; url: string } {
-  const totp = new OTPAuth.TOTP({
-    issuer: 'Stalwart',
-    label: accountLabel || 'account',
-    algorithm: 'SHA1',
-    digits: 6,
-    period: 30,
-    secret: new OTPAuth.Secret({ size: 20 }),
-  });
-  return { totp, url: totp.toString() };
-}
-
-function TotpSection() {
-  const t = useTranslations('settings.security');
-  const { otpEnabled, enableTotp, disableTotp, isSaving, isLoadingAuth } = useAccountSecurityStore();
-  const { client } = useAuthStore();
-
-  const [setupUrl, setSetupUrl] = useState<string | null>(null);
-  const [setupTotp, setSetupTotp] = useState<OTPAuth.TOTP | null>(null);
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
-  const [password, setPassword] = useState('');
-  const [otpCode, setOtpCode] = useState('');
-  const [setupError, setSetupError] = useState<string | null>(null);
-  const [disableOpen, setDisableOpen] = useState(false);
-
-  useEffect(() => {
-    if (!setupUrl) { setQrDataUrl(null); return; }
-    let cancelled = false;
-    QRCode.toDataURL(setupUrl, { width: 220, margin: 1 })
-      .then((url) => { if (!cancelled) setQrDataUrl(url); })
-      .catch(() => { /* ignore */ });
-    return () => { cancelled = true; };
-  }, [setupUrl]);
-
-  const startSetup = () => {
-    const { totp, url } = generateTotp(client?.getUsername() ?? 'account');
-    setSetupTotp(totp);
-    setSetupUrl(url);
-    setPassword('');
-    setOtpCode('');
-    setSetupError(null);
-  };
-
-  const cancelSetup = () => {
-    setSetupTotp(null);
-    setSetupUrl(null);
-    setPassword('');
-    setOtpCode('');
-    setSetupError(null);
-  };
-
-  const confirmSetup = async () => {
-    if (!setupTotp || !setupUrl) return;
-    if (!password) { setSetupError(t('totp.password_required')); return; }
-    if (!otpCode.trim()) { setSetupError(t('totp.code_required')); return; }
-    if (setupTotp.validate({ token: otpCode.trim(), window: 1 }) === null) {
-      setSetupError(t('totp.code_invalid'));
-      return;
-    }
-
-    try {
-      await enableTotp(password, setupUrl, otpCode.trim());
-      cancelSetup();
-      toast.success(t('totp.enabled'));
-    } catch (err) {
-      setSetupError(err instanceof Error ? err.message : t('totp.enable_error'));
-    }
-  };
-
-  const handleDisable = async () => {
-    if (!password) { setSetupError(t('totp.password_required')); return; }
-    try {
-      await disableTotp(password);
-      setDisableOpen(false);
-      setPassword('');
-      setSetupError(null);
-      toast.success(t('totp.disabled'));
-    } catch (err) {
-      setSetupError(err instanceof Error ? err.message : t('totp.disable_error'));
-    }
-  };
-
-  const handleToggle = (enable: boolean) => {
-    setSetupError(null);
-    if (enable) {
-      startSetup();
-    } else {
-      setDisableOpen(true);
-      setPassword('');
-    }
-  };
-
-  if (isLoadingAuth) {
-    return (
-      <SettingItem label={t('totp.label')} description={t('totp.description')}>
-        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-      </SettingItem>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      <SettingItem label={t('totp.label')} description={t('totp.description')}>
-        <div className="flex items-center gap-2">
-          <ToggleSwitch
-            checked={otpEnabled || !!setupUrl}
-            onChange={handleToggle}
-            disabled={isSaving}
-          />
-          <span className={cn('text-xs font-medium', otpEnabled ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground')}>
-            {otpEnabled ? t('totp.active') : t('totp.inactive')}
-          </span>
-        </div>
-      </SettingItem>
-
-      {setupUrl && (
-        <div className="ml-4 p-3 bg-muted rounded-md space-y-3">
-          <p className="text-xs text-muted-foreground">{t('totp.setup_instructions')}</p>
-          {qrDataUrl && (
-            <div className="flex justify-center">
-              <img src={qrDataUrl} alt="TOTP QR code" className="rounded bg-white p-2" />
-            </div>
-          )}
-          <div className="flex items-center gap-2">
-            <code className="text-xs bg-background px-2 py-1 rounded border border-border flex-1 truncate">{setupUrl}</code>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">{t('password.current')}</label>
-            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">{t('totp.verification_code')}</label>
-            <Input value={otpCode} onChange={(e) => setOtpCode(e.target.value)} inputMode="numeric" maxLength={6} />
-          </div>
-          {setupError && <p className="text-xs text-destructive">{setupError}</p>}
-          <div className="flex gap-2">
-            <Button size="sm" onClick={confirmSetup} disabled={isSaving || !password || !otpCode}>
-              {isSaving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
-              {t('totp.confirm')}
-            </Button>
-            <Button size="sm" variant="ghost" onClick={cancelSetup}>{t('app_passwords.cancel')}</Button>
-          </div>
-        </div>
-      )}
-
-      {disableOpen && (
-        <div className="ml-4 p-3 bg-muted rounded-md space-y-2">
-          <p className="text-xs text-muted-foreground">{t('totp.disable_confirm_prompt')}</p>
-          <Input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder={t('password.current')}
-            autoComplete="current-password"
-          />
-          {setupError && <p className="text-xs text-destructive">{setupError}</p>}
-          <div className="flex gap-2">
-            <Button size="sm" variant="destructive" onClick={handleDisable} disabled={isSaving || !password}>
-              {isSaving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
-              {t('totp.disable')}
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => { setDisableOpen(false); setPassword(''); setSetupError(null); }}>
-              {t('app_passwords.cancel')}
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -843,17 +560,16 @@ export function AccountSecuritySettings() {
       <div className="space-y-6">
         {!isOAuth && (
           <>
-            <PasswordChangeSection />
-            <div className="border-t border-border" />
+            {/* Change Password + 2FA removed for now — both require a
+                Stalwart account password the user actually knows, but
+                Sigil Mail mailboxes get provisioned with a random,
+                never-shown password (see provisioning.ts: "this account
+                is only ever reached via the OIDC token / agent
+                app-passwords"). Wallet-login accounts have no "current
+                password" to enter, so both forms were unusable by
+                construction. App Passwords below already covers the
+                real IMAP/SMTP-credential need without requiring one. */}
             <DisplayNameSection />
-            <div className="border-t border-border" />
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <Shield className="w-4 h-4 text-muted-foreground" />
-                <h4 className="text-sm font-medium text-foreground">{t('totp.section_title')}</h4>
-              </div>
-              <TotpSection />
-            </div>
             <div className="border-t border-border" />
           </>
         )}
