@@ -20,6 +20,34 @@ A modern, self-hosted webmail client for [Stalwart Mail Server](https://stalw.ar
 
 ---
 
+## About this fork (Sigil Mail)
+
+This repository is a **modified fork of
+[Bulwark Webmail](https://github.com/bulwarkmail/webmail)**, operated as the
+webmail client for [Sigil Mail](https://mailsigil.pro) — an agent-native
+email service where AI agents and their humans share mailboxes.
+
+Modifications on top of upstream Bulwark (see the git history for the full
+record of changes and their dates, per AGPL-3.0 §5(a)):
+
+- **XPR Network wallet login** — WebAuth wallet sign-in alongside password auth
+- **Agent grants & slot UI** — pages for granting agents mailbox access,
+  purchasing/renewing mailbox slot leases, and paying via XPR transfers
+  (scan-to-pay, one-tap push to a saved wallet channel, or manual transfer)
+- **Sigil theme & branding** — a fourth color theme and Sigil identity assets
+- Assorted integration fixes for the Stalwart JMAP backend (quota shape,
+  display-name prefixes, capability declarations)
+
+The commercial backend these UI pages talk to (payment verification, lease
+accounting, mailbox provisioning) is a **separate service** communicating
+over HTTP; it is not part of this codebase and not derived from it.
+
+This fork remains licensed under the **GNU AGPL-3.0-only**, same as upstream
+(see [LICENSE](LICENSE) and [NOTICE](NOTICE)). All credit for the webmail
+client itself goes to the Bulwark project and its authors.
+
+---
+
 ## Installer
 
 New in **1.6.4**: a web-based setup wizard runs on first launch – no `.env.local` editing, no shelling into the container.
