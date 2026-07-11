@@ -82,6 +82,10 @@ export default function ConfirmPage() {
       const ProtonWebSDK = (await import("@proton/web-sdk")).default;
       await import("@proton/link");
 
+      // WebAuth-only — see grants/page.tsx's freshWalletSession comment:
+      // 'proton'/'anchor' are labeled "Mobile"/"Desktop" by the SDK's own
+      // selector, which reads as generic device choices but are actually
+      // two different wallet apps Sigil never documents or supports.
       const { session, loginResult } = await ProtonWebSDK({
         linkOptions: { chainId: XPR_CHAIN_ID, endpoints: XPR_ENDPOINTS },
         transportOptions: { requestAccount: "mailsigil" },
