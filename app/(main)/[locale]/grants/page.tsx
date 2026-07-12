@@ -1281,7 +1281,17 @@ export default function GrantsPage() {
                             </div>
                           );
                         }
-                        return null; // free slot (or lifetime, or an agent-auto-pull subscription) — nothing to renew/release here
+                        // Free base-quota slot, lifetime-purchased slot, or covered by
+                        // the owner's agent auto-pay subscription — none of these are
+                        // attributable to a SPECIFIC agent in the data (quota/purchased-
+                        // count/subscription-quantity are all owner-level totals, not
+                        // per-agent flags), so rather than guess which of the three it
+                        // is, show the one thing that's true of all three: no action
+                        // needed. Auto-pay subscription state (if active) is already its
+                        // own account-level line above, in leaseInfo.autoPaySubscription.
+                        return (
+                          <p className="text-xs text-muted-foreground">No renewal needed</p>
+                        );
                       })()}
                     </div>
                   );
