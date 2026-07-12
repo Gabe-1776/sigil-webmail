@@ -79,12 +79,12 @@ type LeaseInfo = {
   autoDeleteAfterSuspendedDays: number;
   priceUsdPerSlot: number;
   periodDays: number;
-  // Account-level, never per-slot — a subscription covers `quantity` slots
-  // in aggregate and isn't attributed to any one agent (only agents that
-  // sign their own payments can be on it). Every lease below is always
-  // manual renewal; this is why they're surfaced separately rather than as
-  // a per-row auto/manual badge.
+  // Account-level, not attributable to one agent — a human directly holding
+  // a subscription that covers `quantity` slots in aggregate.
   autoPaySubscription: { quantity: number; status: "active" | "past_due"; nextDueAt: string } | null;
+  // Per-agent — an agent that signed its OWN on-chain subscribe tx pays for
+  // itself, so this one genuinely is attributable to a specific slot.
+  agentAutoPay: Record<string, { status: "active" | "past_due"; nextDueAt: string }>;
 };
 type Invoice = {
   invoiceId: string;
@@ -1220,6 +1220,7 @@ export default function GrantsPage() {
                         // to cross-reference — this IS the slot, live here.
                         const suspension = leaseInfo?.suspendedMailboxes.find((m) => m.agentActor === agentActor);
                         const lease = leaseInfo?.leases.find((l) => l.agentActor === agentActor);
+                        const autoPay = leaseInfo?.agentAutoPay[agentActor];
                         const cardPayFlow = payFlow?.context.kind === "renew" && payFlow.context.cardAgentActor === agentActor ? payFlow : null;
 
                         if (suspension) {
@@ -1282,14 +1283,20 @@ export default function GrantsPage() {
                             </div>
                           );
                         }
-                        // Free base-quota slot, lifetime-purchased slot, or covered by
-                        // the owner's agent auto-pay subscription — none of these are
+                        // An agent that signed its own on-chain subscription pays for
+                        // itself — genuinely attributable, so it gets its own label.
+                        if (autoPay) {
+                          return (
+                            <p className="text-xs text-muted-foreground">
+                              Agent auto-pay{autoPay.status === "past_due" ? " — past due" : ""}
+                            </p>
+                          );
+                        }
+                        // Free base-quota slot or a lifetime-purchased slot — neither is
                         // attributable to a SPECIFIC agent in the data (quota/purchased-
-                        // count/subscription-quantity are all owner-level totals, not
-                        // per-agent flags), so rather than guess which of the three it
-                        // is, show the one thing that's true of all three: no action
-                        // needed. Auto-pay subscription state (if active) is already its
-                        // own account-level line above, in leaseInfo.autoPaySubscription.
+                        // count are owner-level totals, not per-agent flags), so rather
+                        // than guess which of the two it is, show the one thing that's
+                        // true of both: no action needed.
                         return (
                           <p className="text-xs text-muted-foreground">No renewal needed</p>
                         );
