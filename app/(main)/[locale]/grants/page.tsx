@@ -53,8 +53,8 @@ type LinkedAccounts = {
 
 type Quota = {
   owner: string;
-  agentMailboxes: { used: number; limit: number; purchasedSlots: number };
-  nextSlot: { priceUsd: number; purchaseEndpoint: string };
+  agentMailboxes: { used: number; limit: number; max: number; purchasedSlots: number };
+  nextSlot: { priceUsd: number; purchaseEndpoint: string | null };
 };
 
 // 30-day slot leases renewed by plain transfer + memo — the primary
@@ -1011,7 +1011,7 @@ export default function GrantsPage() {
               </div>
               {quota && (
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {quota.agentMailboxes.used} of {quota.agentMailboxes.limit} agent slots used
+                  {quota.agentMailboxes.used} of {quota.agentMailboxes.limit} agent slots used ({quota.agentMailboxes.max} max)
                   {quota.agentMailboxes.purchasedSlots > 0 && ` (${quota.agentMailboxes.purchasedSlots} lifetime)`}
                   {leaseInfo && leaseInfo.leases.length > 0 && ` (${leaseInfo.leases.length} on manual renewal)`}
                   {leaseInfo?.autoPaySubscription && ` (${leaseInfo.autoPaySubscription.quantity} on agent auto-pay${leaseInfo.autoPaySubscription.status === "past_due" ? " — past due" : ""})`}.
@@ -1150,6 +1150,7 @@ export default function GrantsPage() {
               // order — only that many rows get "Claim (free)"; the rest
               // get "Buy a slot" attached to that exact row.
               let remainingCapacity = quota ? quota.agentMailboxes.limit - quota.agentMailboxes.used : 0;
+              const atHardCap = quota ? quota.agentMailboxes.limit >= quota.agentMailboxes.max : false;
 
               return (
               <div className="space-y-2">
@@ -1327,6 +1328,10 @@ export default function GrantsPage() {
                           >
                             {isClaiming ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Provisioning…</>) : "Claim"}
                           </Button>
+                        ) : atHardCap ? (
+                          <span className="text-xs text-muted-foreground shrink-0" title={`Sigil Mail supports a maximum of ${quota?.agentMailboxes.max} agent mailboxes per account`}>
+                            {quota?.agentMailboxes.max} slot max reached
+                          </span>
                         ) : (
                           <Button
                             size="sm"
