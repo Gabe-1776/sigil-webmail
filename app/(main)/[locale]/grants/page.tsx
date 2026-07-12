@@ -79,6 +79,12 @@ type LeaseInfo = {
   autoDeleteAfterSuspendedDays: number;
   priceUsdPerSlot: number;
   periodDays: number;
+  // Account-level, never per-slot — a subscription covers `quantity` slots
+  // in aggregate and isn't attributed to any one agent (only agents that
+  // sign their own payments can be on it). Every lease below is always
+  // manual renewal; this is why they're surfaced separately rather than as
+  // a per-row auto/manual badge.
+  autoPaySubscription: { quantity: number; status: "active" | "past_due"; nextDueAt: string } | null;
 };
 type Invoice = {
   invoiceId: string;
@@ -1007,7 +1013,8 @@ export default function GrantsPage() {
                 <p className="text-xs text-muted-foreground mt-0.5">
                   {quota.agentMailboxes.used} of {quota.agentMailboxes.limit} agent slots used
                   {quota.agentMailboxes.purchasedSlots > 0 && ` (${quota.agentMailboxes.purchasedSlots} lifetime)`}
-                  {leaseInfo && leaseInfo.leases.length > 0 && ` (${leaseInfo.leases.length} on a 30-day lease${leaseInfo.leases.length > 1 ? "s" : ""})`}.
+                  {leaseInfo && leaseInfo.leases.length > 0 && ` (${leaseInfo.leases.length} on manual renewal)`}
+                  {leaseInfo?.autoPaySubscription && ` (${leaseInfo.autoPaySubscription.quantity} on agent auto-pay${leaseInfo.autoPaySubscription.status === "past_due" ? " — past due" : ""})`}.
                 </p>
               )}
               {leaseInfo && (() => {
@@ -1054,7 +1061,7 @@ export default function GrantsPage() {
               })()}
               {leaseInfo && leaseInfo.leases.length > 0 && (() => {
                 // Feature A: an attached lease manages from its own agent's
-                // card now (renews/Release live there) — this dropdown is
+                // card now (renews/Stop renewing live there) — this dropdown is
                 // only for leases nothing claimed yet (spare/unassigned).
                 const unattached = leaseInfo.leases.filter((l) => !l.agentActor);
                 return (
@@ -1088,7 +1095,7 @@ export default function GrantsPage() {
                         {unattached.map((l) => (
                           <li key={l.id} className="space-y-1.5">
                             <div className="flex items-center justify-between gap-2">
-                              <span>slot {l.id.slice(0, 8)} — renews {new Date(l.paidUntil).toLocaleDateString()}</span>
+                              <span>slot {l.id.slice(0, 8)} — manual, renews {new Date(l.paidUntil).toLocaleDateString()}</span>
                               {!(releaseFlow?.leaseId === l.id && releaseFlow.phase === "confirm") && (
                                 releaseFlow?.leaseId === l.id ? (
                                   releaseFlow.phase === "releasing" ? (
@@ -1101,7 +1108,7 @@ export default function GrantsPage() {
                                     onClick={() => setReleaseFlow({ leaseId: l.id, phase: "confirm", error: "" })}
                                     className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-destructive/40 text-destructive/80 hover:border-destructive hover:text-destructive transition-colors shrink-0"
                                   >
-                                    Release
+                                    Stop renewing
                                   </button>
                                 )
                               )}
@@ -1112,7 +1119,7 @@ export default function GrantsPage() {
                                   Stops renewing — no refund for now. Keeps working until {new Date(l.paidUntil).toLocaleDateString()}, then blocks after a {leaseInfo?.gracePeriodDays}-day grace, deleted if still unpaid {leaseInfo?.autoDeleteAfterSuspendedDays} days after that.
                                 </p>
                                 <span className="flex items-center gap-3">
-                                  <button onClick={() => handleReleaseLease(l.id)} className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-destructive text-destructive hover:bg-destructive/10 transition-colors">Confirm release</button>
+                                  <button onClick={() => handleReleaseLease(l.id)} className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-destructive text-destructive hover:bg-destructive/10 transition-colors">Confirm</button>
                                   <button onClick={() => setReleaseFlow(null)} className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-border text-muted-foreground hover:border-foreground/30 transition-colors">Keep it</button>
                                 </span>
                               </div>
@@ -1236,7 +1243,7 @@ export default function GrantsPage() {
                         if (lease) {
                           return (
                             <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
-                              <span>Renews {new Date(lease.paidUntil).toLocaleDateString()}</span>
+                              <span>Manual renewal — renews {new Date(lease.paidUntil).toLocaleDateString()}</span>
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -1253,7 +1260,7 @@ export default function GrantsPage() {
                                       Stops renewing — no refund for now. {agentActor} keeps working normally until {new Date(lease.paidUntil).toLocaleDateString()}, then blocks (no send/receive, mail kept) after a {leaseInfo?.gracePeriodDays}-day grace, and is permanently deleted if still unpaid {leaseInfo?.autoDeleteAfterSuspendedDays} days after that.
                                     </p>
                                     <span className="flex items-center gap-3">
-                                      <button onClick={() => handleReleaseLease(lease.id)} className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-destructive text-destructive hover:bg-destructive/10 transition-colors">Confirm release</button>
+                                      <button onClick={() => handleReleaseLease(lease.id)} className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-destructive text-destructive hover:bg-destructive/10 transition-colors">Confirm</button>
                                       <button onClick={() => setReleaseFlow(null)} className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-border text-muted-foreground hover:border-foreground/30 transition-colors">Keep it</button>
                                     </span>
                                   </div>
@@ -1267,7 +1274,7 @@ export default function GrantsPage() {
                                   onClick={() => setReleaseFlow({ leaseId: lease.id, phase: "confirm", error: "" })}
                                   className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-destructive/40 text-destructive/80 hover:border-destructive hover:text-destructive transition-colors"
                                 >
-                                  Release
+                                  Stop renewing
                                 </button>
                               )}
                               {cardPayFlow && renderInvoiceCard()}
