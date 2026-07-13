@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useAuthStore } from "@/stores/auth-store";
+import { useAccountStore } from "@/stores/account-store";
+import { generateAccountId } from "@/lib/account-utils";
 import { useConfig } from "@/hooks/use-config";
 import { ShieldCheck, Mail, Loader2, RefreshCw, Check, X, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -89,12 +91,35 @@ type LeaseInfo = {
 type Invoice = {
   invoiceId: string;
   priceUsd: number;
-  leaseIds: string[];
-  renewing: boolean;
+  leaseIds?: string[]; // slot invoices only — storage-upgrade invoices omit this
+  renewing?: boolean; // slot invoices only
   payTo: string;
   memo: string;
   payOptions: { symbol: string; contract: string; quantity: string }[];
   expiresAt: string;
+};
+type StoragePlanStatus = {
+  mailboxActor: string;
+  tier: "base" | "pro";
+  source?: "paid" | "sigil-storage-bundle";
+  bundleTier?: string; // Sigil Storage's own tier key (e.g. "proplus") when source is the bundle
+  quotaBytes: number;
+  usedBytes: number | null;
+  paidUntil: string | null;
+  graceEndsAt: string | null;
+};
+// Duplicated from sigil-data's STORAGE_TIERS display names (no cross-repo
+// import) — keep in sync by hand per BLUEPRINT-family-storage-tiers.md.
+// Only the bundle-qualifying tiers need an entry here.
+const BUNDLE_TIER_DISPLAY: Record<string, string> = { proplus: "Pro+", max: "Max", maxplus: "Max+" };
+type StorageStatus = {
+  owner: string;
+  baseQuotaBytes: number;
+  proQuotaBytes: number;
+  priceUsd: number;
+  periodDays: number;
+  gracePeriodDays: number;
+  plans: StoragePlanStatus[];
 };
 // leaseIds omitted = renew everything (the top-level "Renew all" bundle);
 // set = renew just this one lease (Feature A: the Renew button on a
@@ -104,7 +129,8 @@ type Invoice = {
 // that).
 type PayContext =
   | { kind: "new"; agentActor: string }
-  | { kind: "renew"; leaseIds?: string[]; cardAgentActor?: string };
+  | { kind: "renew"; leaseIds?: string[]; cardAgentActor?: string }
+  | { kind: "storage-upgrade"; mailboxActor: string };
 type PayFlow = {
   context: PayContext;
   phase: "creating" | "waiting" | "claiming" | "done" | "error";
@@ -146,6 +172,8 @@ function StatusBadge({ status }: { status: string }) {
 export default function GrantsPage() {
   const router = useRouter();
   const login = useAuthStore((s) => s.login);
+  const switchAccount = useAuthStore((s) => s.switchAccount);
+  const hasAccount = useAccountStore((s) => s.hasAccount);
   const { jmapServerUrl, devMode } = useConfig();
 
   const [token, setToken] = useState<string | null>(null);
@@ -165,6 +193,7 @@ export default function GrantsPage() {
   const [deleting, setDeleting] = useState(false);
   const [quota, setQuota] = useState<Quota | null>(null);
   const [leaseInfo, setLeaseInfo] = useState<LeaseInfo | null>(null);
+  const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null);
   // Single in-flight payment flow at a time (buying a new slot for one
   // agent, or renewing every current lease in one bundled invoice) — a
   // plain transfer+memo has none of the per-row wallet-session concerns
@@ -208,7 +237,7 @@ export default function GrantsPage() {
     if (!token) return;
     if (!background) setLoading(true);
     try {
-      const [linkedRes, incomingRes, issuedRes, acceptedRes, incomingPmRes, sentPmRes, quotaRes, leaseInfoRes] = await Promise.all([
+      const [linkedRes, incomingRes, issuedRes, acceptedRes, incomingPmRes, sentPmRes, quotaRes, leaseInfoRes, storageStatusRes] = await Promise.all([
         authFetch("/api/agentcore/linked"),
         authFetch("/api/grants/incoming"),
         authFetch("/api/grants/issued"),
@@ -217,10 +246,12 @@ export default function GrantsPage() {
         authFetch("/api/mailboxes/pending/sent"),
         authFetch("/api/quota").catch(() => null),
         authFetch("/api/slots/leases").catch(() => null),
+        authFetch("/api/storage/status").catch(() => null),
       ]);
       if (linkedRes.ownedAgents) setLinked(linkedRes);
       if (quotaRes?.ok) setQuota(quotaRes);
       if (leaseInfoRes?.ok) setLeaseInfo(leaseInfoRes);
+      if (storageStatusRes?.ok) setStorageStatus(storageStatusRes);
       setIncoming(incomingRes.grants ?? []);
       setIssued(issuedRes.grants ?? []);
       setAccepted(acceptedRes.grants ?? []);
@@ -265,6 +296,32 @@ export default function GrantsPage() {
       return await login(jmapServerUrl, username, password, undefined, true);
     } catch {
       return false;
+    }
+  };
+
+  // Owner -> agent mailbox access is IMPLICIT: you created the agent, you pay
+  // for its slot, you already get its credential in plaintext at claim time
+  // (the box below). No consent ceremony needed here, unlike accepting a
+  // grant — that asymmetry (agent -> human access stays EXPLICIT, via grants
+  // only) is deliberate, not an oversight.
+  const openAgentInWebmail = async (agentActor: string) => {
+    const key = `openwebmail-${agentActor}`;
+    setActionStatus((s) => ({ ...s, [key]: "Opening…" }));
+    try {
+      const username = `${agentActor}@mailsigil.pro`;
+      if (jmapServerUrl && hasAccount(username, jmapServerUrl)) {
+        await switchAccount(generateAccountId(username, jmapServerUrl));
+        clearStatus(key);
+        router.push("/");
+        return;
+      }
+      const cred = await claimAgentMailbox(agentActor);
+      const added = await addGrantedAccount(cred.username, cred.password);
+      if (!added) throw new Error("mailbox is ready, but adding it to your account switcher failed — try again");
+      clearStatus(key);
+      router.push("/");
+    } catch (err: any) {
+      setActionStatus((s) => ({ ...s, [key]: err?.message ?? "failed" }));
     }
   };
 
@@ -316,22 +373,26 @@ export default function GrantsPage() {
   const XPR_CHAIN_ID = "384da888112027f0321850a169f737c33e53b388aad48b5adace4bab97f437e0";
   const XPR_ENDPOINTS = ["https://proton.eosusa.io", "https://proton.protonuk.io"];
 
-  const claimAgentMailbox = async (agentActor: string): Promise<boolean> => {
+  const claimAgentMailbox = async (agentActor: string): Promise<{ username: string; password: string }> => {
     const res = await authFetch("/api/grants/claim-agent-mailbox", {
       method: "POST",
       body: JSON.stringify({ agentActor }),
     });
     if (!res.ok) throw new Error(res.error || "failed to claim mailbox");
     setClaimedCreds((c) => ({ ...c, [agentActor]: res.credential }));
-    return true;
+    return res.credential;
   };
 
-  // Free path — room already exists in quota.
+  // Free path — room already exists in quota. Also adds the mailbox straight
+  // to the account switcher (best-effort — the credential box below is the
+  // fallback if this fails, so a switcher-add error doesn't block the claim
+  // itself from being reported as done).
   const handleClaimAgentMailbox = async (agentActor: string) => {
     const key = `claim-${agentActor}`;
     setActionStatus((s) => ({ ...s, [key]: "Provisioning…" }));
     try {
-      await claimAgentMailbox(agentActor);
+      const cred = await claimAgentMailbox(agentActor);
+      await addGrantedAccount(cred.username, cred.password);
       setActionStatus((s) => ({ ...s, [key]: "Done" }));
       loadAll(true); // refresh quota + linked list so the row moves to "has mailbox"
     } catch (err: any) {
@@ -418,10 +479,16 @@ export default function GrantsPage() {
   const handleStartPurchase = async (context: PayContext) => {
     setPayFlow({ context, phase: "creating", invoice: null, error: "", payToken: "XMD", showManual: false, pushStatus: "idle" });
     try {
-      const body = context.kind === "renew"
-        ? { leaseIds: context.leaseIds ?? leaseInfo?.leases.map((l) => l.id) ?? [] }
-        : {};
-      const res = await authFetch("/api/quota/invoice", { method: "POST", body: JSON.stringify(body) });
+      // Same invoice card, different endpoint: storage-upgrade invoices
+      // hit /api/storage/upgrade instead of /api/quota/invoice, but the
+      // response shape (invoiceId/payTo/memo/payOptions/expiresAt) matches
+      // exactly — renderInvoiceCard doesn't know or care which it's paying.
+      const [endpoint, body] = context.kind === "storage-upgrade"
+        ? ["/api/storage/upgrade", { mailboxActor: context.mailboxActor }]
+        : context.kind === "renew"
+        ? ["/api/quota/invoice", { leaseIds: context.leaseIds ?? leaseInfo?.leases.map((l) => l.id) ?? [] }]
+        : ["/api/quota/invoice", {}];
+      const res = await authFetch(endpoint as string, { method: "POST", body: JSON.stringify(body) });
       if (!res.ok) throw new Error(res.error || "could not create invoice");
       setPayFlow({ context, phase: "waiting", invoice: res, error: "", payToken: "XMD", showManual: false, pushStatus: "idle" });
     } catch (err: any) {
@@ -446,7 +513,8 @@ export default function GrantsPage() {
           if (context.kind === "new") {
             setPayFlow((pf) => (pf ? { ...pf, phase: "claiming" } : pf));
             try {
-              await claimAgentMailbox(context.agentActor);
+              const cred = await claimAgentMailbox(context.agentActor);
+              await addGrantedAccount(cred.username, cred.password); // best-effort, see handleClaimAgentMailbox
               setPayFlow((pf) => (pf ? { ...pf, phase: "done" } : pf));
             } catch (err: any) {
               setPayFlow((pf) => (pf ? { ...pf, phase: "error", error: err?.message ?? "paid, but mailbox provisioning failed — contact support" } : pf));
@@ -544,7 +612,7 @@ export default function GrantsPage() {
     if (phase === "done") {
       return (
         <div className="rounded-md bg-emerald-500/10 border border-emerald-500/30 px-3 py-2 mt-2 text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
-          <Check className="w-3 h-3 shrink-0" /> {context.kind === "renew" ? "Renewed." : "Paid."}
+          <Check className="w-3 h-3 shrink-0" /> {context.kind === "renew" ? "Renewed." : context.kind === "storage-upgrade" ? "Pro tier active." : "Paid."}
           <button onClick={() => setPayFlow(null)} className="ml-auto text-muted-foreground underline underline-offset-2">Close</button>
         </div>
       );
@@ -1134,6 +1202,65 @@ export default function GrantsPage() {
                 );
               })()}
             </div>
+            {actor && storageStatus && (() => {
+              const ownPlan = storageStatus.plans.find((p) => p.mailboxActor === actor);
+              const isPro = ownPlan?.tier === "pro";
+              const isBundled = ownPlan?.source === "sigil-storage-bundle";
+              const now = Date.now();
+              const isInGrace = isPro && !isBundled && ownPlan!.paidUntil !== null && new Date(ownPlan!.paidUntil).getTime() <= now;
+              const daysUntilBlocked = isInGrace
+                ? Math.max(0, Math.ceil((new Date(ownPlan!.graceEndsAt!).getTime() - now) / 86_400_000))
+                : 0;
+              const ownPayFlow = payFlow?.context.kind === "storage-upgrade" && payFlow.context.mailboxActor === actor ? payFlow : null;
+              const quotaBytes = ownPlan?.quotaBytes ?? storageStatus.baseQuotaBytes;
+              const usedPct = ownPlan?.usedBytes != null ? Math.min(100, (ownPlan.usedBytes / quotaBytes) * 100) : null;
+              const bundleTierDisplay = ownPlan?.bundleTier ? (BUNDLE_TIER_DISPLAY[ownPlan.bundleTier] ?? ownPlan.bundleTier) : null;
+
+              return (
+                <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium">Your mailbox</p>
+                      <p className={cn("text-xs", isInGrace ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>
+                        {isBundled
+                          ? `Pro ${storageStatus.proQuotaBytes / 1024 ** 3}GB — included free with your Sigil Storage ${bundleTierDisplay} plan`
+                          : isInGrace
+                          ? `Past due since ${new Date(ownPlan!.paidUntil!).toLocaleDateString()} — grace period, drops to ${storageStatus.baseQuotaBytes / 1024 ** 3}GB in ${daysUntilBlocked} day${daysUntilBlocked === 1 ? "" : "s"} if not renewed`
+                          : isPro
+                          ? `Pro ${storageStatus.proQuotaBytes / 1024 ** 3}GB — renews ${new Date(ownPlan!.paidUntil!).toLocaleDateString()}`
+                          : `${storageStatus.baseQuotaBytes / 1024 ** 3}GB base`}
+                      </p>
+                    </div>
+                    {isBundled ? (
+                      <a
+                        href="https://storagesigil.pro"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs h-7 shrink-0 inline-flex items-center px-3 rounded-md border border-border hover:bg-muted"
+                      >
+                        Manage on Sigil Storage
+                      </a>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant={isPro && !isInGrace ? "outline" : "default"}
+                        onClick={() => handleStartPurchase({ kind: "storage-upgrade", mailboxActor: actor })}
+                        disabled={!!payFlow}
+                        className={cn("text-xs h-7 shrink-0", (!isPro || isInGrace) && "bg-[#34D6C2] hover:bg-[#2bc0ae] text-black")}
+                      >
+                        {isPro ? `Renew — $${storageStatus.priceUsd}` : `Upgrade to Pro — $${storageStatus.priceUsd}/mo`}
+                      </Button>
+                    )}
+                  </div>
+                  {usedPct !== null && (
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden" title={`${(ownPlan!.usedBytes! / 1024 / 1024).toFixed(1)}MB of ${quotaBytes / 1024 ** 3}GB used`}>
+                      <div className="h-full bg-[#34D6C2]" style={{ width: `${usedPct}%` }} />
+                    </div>
+                  )}
+                  {ownPayFlow && renderInvoiceCard()}
+                </div>
+              );
+            })()}
             {!linked || (linked.ownedAgents.length === 0 && !linked.ownedBy) ? (
               <div className="rounded-lg border border-dashed border-border p-8 text-center text-muted-foreground text-sm space-y-1">
                 <AlertCircle className="w-5 h-5 mx-auto mb-2 opacity-40" />
@@ -1156,8 +1283,11 @@ export default function GrantsPage() {
               <div className="space-y-2">
                 {withMailbox.map(({ actor: agentActor }) => {
                   const offerKey = `offer-${agentActor}`;
+                  const openKey = `openwebmail-${agentActor}`;
                   const liveGrant = issued.find(g => g.grantee_actor === agentActor && (g.status === "pending" || g.status === "accepted"));
                   const isSending = actionStatus[offerKey] === "Sending…";
+                  const isOpening = actionStatus[openKey] === "Opening…";
+                  const openError = actionStatus[openKey] && actionStatus[openKey] !== "Opening…" ? actionStatus[openKey] : null;
                   const confirmingRemove = removingAgent === `confirm-${agentActor}`;
                   const isRemoving = removingAgent === agentActor;
                   return (
@@ -1168,6 +1298,14 @@ export default function GrantsPage() {
                           <p className="text-xs text-muted-foreground">Your agent</p>
                         </div>
                         <div className="flex flex-col items-end gap-1.5 shrink-0">
+                          <Button
+                            size="sm"
+                            onClick={() => openAgentInWebmail(agentActor)}
+                            disabled={isOpening}
+                            className="text-xs bg-[#34D6C2] hover:bg-[#2bc0ae] text-black"
+                          >
+                            {isOpening ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Opening…</>) : "Open in webmail"}
+                          </Button>
                           {liveGrant?.status === "accepted" ? (
                             <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
                               <Check className="w-3 h-3" /> Grant accepted
@@ -1214,6 +1352,9 @@ export default function GrantsPage() {
                       {removeError[agentActor] && (
                         <p className="text-xs text-destructive">{removeError[agentActor]}</p>
                       )}
+                      {openError && (
+                        <p className="text-xs text-destructive">{openError}</p>
+                      )}
                       {(() => {
                         // Feature A: an attached lease or suspension shows
                         // right on the agent that paid for it, no UUID list
@@ -1243,9 +1384,26 @@ export default function GrantsPage() {
                           );
                         }
                         if (lease) {
+                          // Suspension is checked above and returns early, so
+                          // reaching here with a past paidUntil unambiguously
+                          // means "in the grace window, not yet blocked" —
+                          // graceEndsAt hasn't passed either, or the
+                          // suspend-lapsed-leases cron would already have
+                          // moved it into suspendedMailboxes.
+                          const isInGrace = new Date(lease.paidUntil).getTime() <= Date.now();
+                          const daysUntilBlocked = isInGrace
+                            ? Math.max(0, Math.ceil((new Date(lease.graceEndsAt).getTime() - Date.now()) / 86_400_000))
+                            : 0;
                           return (
-                            <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
-                              <span>Manual renewal — renews {new Date(lease.paidUntil).toLocaleDateString()}</span>
+                            <div className={cn(
+                              "flex items-center gap-2 flex-wrap text-xs",
+                              isInGrace ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground",
+                            )}>
+                              <span>
+                                {isInGrace
+                                  ? `Past due since ${new Date(lease.paidUntil).toLocaleDateString()} — grace period, blocks in ${daysUntilBlocked} day${daysUntilBlocked === 1 ? "" : "s"} if not renewed`
+                                  : `Manual renewal — renews ${new Date(lease.paidUntil).toLocaleDateString()}`}
+                              </span>
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -1299,6 +1457,48 @@ export default function GrantsPage() {
                         // true of both: no action needed.
                         return (
                           <p className="text-xs text-muted-foreground">No renewal needed</p>
+                        );
+                      })()}
+                      {(() => {
+                        // Storage tier is orthogonal to the agent-mailbox
+                        // slot lease above — a mailbox can be on Pro storage
+                        // regardless of how its slot itself is paid for
+                        // (free base slot, manual lease, or agent auto-pay).
+                        const plan = storageStatus?.plans?.find((p) => p.mailboxActor === agentActor);
+                        if (!plan) return null;
+                        const isPro = plan.tier === "pro";
+                        const isBundled = plan.source === "sigil-storage-bundle";
+                        const now = Date.now();
+                        const isInGrace = isPro && !isBundled && plan.paidUntil !== null && new Date(plan.paidUntil).getTime() <= now;
+                        const daysUntilBlocked = isInGrace
+                          ? Math.max(0, Math.ceil((new Date(plan.graceEndsAt!).getTime() - now) / 86_400_000))
+                          : 0;
+                        const agentStoragePayFlow = payFlow?.context.kind === "storage-upgrade" && payFlow.context.mailboxActor === agentActor ? payFlow : null;
+                        const bundleTierDisplay = plan.bundleTier ? (BUNDLE_TIER_DISPLAY[plan.bundleTier] ?? plan.bundleTier) : null;
+                        return (
+                          <div className="flex items-center gap-2 flex-wrap text-xs">
+                            <span className={isInGrace ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}>
+                              {isBundled
+                                ? `Pro storage ${storageStatus!.proQuotaBytes / 1024 ** 3}GB — included free (Sigil Storage ${bundleTierDisplay})`
+                                : isInGrace
+                                ? `Storage past due since ${new Date(plan.paidUntil!).toLocaleDateString()} — drops to ${storageStatus!.baseQuotaBytes / 1024 ** 3}GB in ${daysUntilBlocked} day${daysUntilBlocked === 1 ? "" : "s"}`
+                                : isPro
+                                ? `Pro storage ${storageStatus!.proQuotaBytes / 1024 ** 3}GB — renews ${new Date(plan.paidUntil!).toLocaleDateString()}`
+                                : `${storageStatus!.baseQuotaBytes / 1024 ** 3}GB base storage`}
+                            </span>
+                            {!isBundled && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleStartPurchase({ kind: "storage-upgrade", mailboxActor: agentActor })}
+                                disabled={!!payFlow}
+                                className="text-xs h-6"
+                              >
+                                {isPro ? `Renew — $${storageStatus!.priceUsd}` : `Upgrade — $${storageStatus!.priceUsd}/mo`}
+                              </Button>
+                            )}
+                            {agentStoragePayFlow && renderInvoiceCard()}
+                          </div>
                         );
                       })()}
                     </div>
