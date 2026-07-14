@@ -7,13 +7,14 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 
 import { useAuthStore } from "@/stores/auth-store";
+import { generateAccountId, getAccountScopedKey } from "@/lib/account-utils";
 import { useAccountStore } from "@/stores/account-store";
 import { useThemeStore } from "@/stores/theme-store";
 import { useShallow } from "zustand/react/shallow";
 import { useConfig } from "@/hooks/use-config";
 import { apiFetch, getPathPrefix, toRouterPath, withBasePath } from "@/lib/browser-navigation";
 import { cn } from "@/lib/utils";
-import { AlertCircle, Loader2, X, Info, LogIn, Sun, Moon, Monitor, Check, Shield, Play, Copy, KeyRound } from "lucide-react";
+import { AlertCircle, Loader2, X, Info, LogIn, Sun, Moon, Monitor, Check, Shield, Play, Copy } from "lucide-react";
 import { type OAuthMetadata } from "@/lib/oauth/discovery";
 import { generateCodeVerifier, generateCodeChallenge, generateState } from "@/lib/oauth/pkce";
 import type { PublicJmapServerEntry } from "@/lib/admin/jmap-servers";
@@ -98,6 +99,11 @@ export default function LoginPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const isAddAccountMode = searchParams.get("mode") === "add-account";
+  // KYC-bypass signup link: ?invite=<code> from an admin-minted invite
+  // code (POST /api/admin/invite-codes). Only relevant for a wallet that
+  // doesn't have a mailbox yet and isn't KYC'd — passed straight through
+  // to verify/verify-proof, which validate and burn it server-side.
+  const inviteCode = searchParams.get("invite");
 
   // When the mobile app launches the webmail in a browser tab it tacks on
   // these params. We grab them once at mount and stash them in a ref so any
@@ -150,15 +156,6 @@ export default function LoginPage() {
   const [xprStatus, setXprStatus] = useState("");
   const [xprError, setXprError] = useState("");
   const sigilGrantToken = searchParams.get("sigil_grant_token") ?? "";
-  // Manual-credential fallback (redundant-paths rule) — for a Sigil
-  // credential (agent mailbox, accepted grant, or API key) that doesn't
-  // require the WebAuth wallet-connect popup. See handleXprLogin above for
-  // the wallet path this mirrors.
-  const [showCredentialForm, setShowCredentialForm] = useState(false);
-  const [credUsername, setCredUsername] = useState("");
-  const [credPassword, setCredPassword] = useState("");
-  const [credLoading, setCredLoading] = useState(false);
-  const [credError, setCredError] = useState("");
   const [oauthLoading, setOauthLoading] = useState(false);
   const [demoLoading, setDemoLoading] = useState(false);
 
@@ -604,7 +601,7 @@ export default function LoginPage() {
         verifyRes = await fetch(`${XPR_AUTH_SERVICE_URL}/api/auth/verify-proof`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ proof: loginResult.proof.toString() }),
+          body: JSON.stringify({ proof: loginResult.proof.toString(), inviteCode: inviteCode || undefined }),
         }).then((r) => r.json());
       } else {
         setXprStatus(t("xpr_requesting_challenge") || "Requesting login challenge…");
@@ -637,7 +634,7 @@ export default function LoginPage() {
         verifyRes = await fetch(`${XPR_AUTH_SERVICE_URL}/api/auth/verify`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ challengeId, actor, permission, signatures: result.signatures, serializedTransaction }),
+          body: JSON.stringify({ challengeId, actor, permission, signatures: result.signatures, serializedTransaction, inviteCode: inviteCode || undefined }),
         }).then((r) => r.json());
       }
 
@@ -677,8 +674,13 @@ export default function LoginPage() {
       const success = await login(serverUrl, appPasswordRes.username, appPasswordRes.password, undefined, true);
       if (success) {
         if (verifyRes.accessToken) {
-          localStorage.setItem("sigil_auth_token", verifyRes.accessToken);
-          localStorage.setItem("sigil_actor", appPasswordRes.username?.split("@")[0] ?? "");
+          // Account-scoped, not a single global pair — otherwise the
+          // Agent Wallets/My Mailbox page stays pinned to whichever
+          // account last completed wallet-connect instead of following
+          // the account switcher. See grants/page.tsx's matching read.
+          const scopedAccountId = generateAccountId(appPasswordRes.username, serverUrl);
+          localStorage.setItem(getAccountScopedKey("sigil_auth_token", scopedAccountId), verifyRes.accessToken);
+          localStorage.setItem(getAccountScopedKey("sigil_actor", scopedAccountId), appPasswordRes.username?.split("@")[0] ?? "");
         }
         router.push("/");
       } else {
@@ -688,24 +690,6 @@ export default function LoginPage() {
       setXprError(err instanceof Error ? err.message : String(err));
     } finally {
       setXprLoading(false);
-    }
-  };
-
-  const handleCredentialLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setCredError("");
-    setCredLoading(true);
-    try {
-      const success = await login(serverUrl, credUsername.trim(), credPassword, undefined, true);
-      if (success) {
-        router.push("/");
-      } else {
-        throw new Error("Sign-in failed — check the username and password");
-      }
-    } catch (err) {
-      setCredError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setCredLoading(false);
     }
   };
 
@@ -961,6 +945,11 @@ export default function LoginPage() {
             <p className="text-sm text-muted-foreground mt-1.5">
               {isAddAccountMode ? t("add_account_subtitle") : (t("title") !== appName ? t("title") : "Sign in to your account")}
             </p>
+            {inviteCode && (
+              <p className="text-xs mt-2 px-3 py-1.5 rounded-full inline-block" style={{ background: "#FACC15", color: "#1f1300" }}>
+                Invite link detected — no KYC needed for this signup
+              </p>
+            )}
           </div>
 
           {/* Form section */}
@@ -1109,67 +1098,6 @@ export default function LoginPage() {
                     </div>
                   )}
                 </div>
-
-                {/* Manual-credential fallback — the dumb-but-reliable path
-                    next to the smart wallet-connect button above. For a
-                    credential Sigil already generated: agent mailbox access
-                    (grants page), an accepted grant, or a Settings -> Security
-                    API key. None of those need a wallet popup. */}
-                {!showCredentialForm ? (
-                  <button
-                    type="button"
-                    onClick={() => setShowCredentialForm(true)}
-                    className="w-full text-center text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    <KeyRound className="w-3.5 h-3.5" />
-                    Sign in with a credential
-                  </button>
-                ) : (
-                  <form onSubmit={handleCredentialLogin} className="space-y-3 p-4 rounded-xl border border-border/60 bg-muted/20">
-                    <p className="text-xs text-muted-foreground">
-                      For credentials generated by Sigil — agent mailbox credentials, grant credentials, or API keys from Settings → Security.
-                    </p>
-                    <input
-                      type="text"
-                      value={credUsername}
-                      onChange={(e) => setCredUsername(e.target.value)}
-                      placeholder="username or full address"
-                      autoComplete="username"
-                      className="w-full h-10 px-3 rounded-lg border border-border bg-background text-sm"
-                      disabled={credLoading}
-                    />
-                    <input
-                      type="password"
-                      value={credPassword}
-                      onChange={(e) => setCredPassword(e.target.value)}
-                      placeholder="password"
-                      autoComplete="current-password"
-                      className="w-full h-10 px-3 rounded-lg border border-border bg-background text-sm"
-                      disabled={credLoading}
-                    />
-                    {credError && (
-                      <p className="text-sm text-destructive leading-relaxed">{credError}</p>
-                    )}
-                    <div className="flex gap-2">
-                      <Button
-                        type="submit"
-                        className="flex-1 h-10 text-sm"
-                        disabled={credLoading || !credUsername || !credPassword}
-                      >
-                        {credLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Sign in"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="h-10 text-sm"
-                        onClick={() => { setShowCredentialForm(false); setCredError(""); setCredUsername(""); setCredPassword(""); }}
-                        disabled={credLoading}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </form>
-                )}
               </div>
             )}
 

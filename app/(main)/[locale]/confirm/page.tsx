@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { useRouter } from "@/i18n/navigation";
 import { useAuthStore } from "@/stores/auth-store";
+import { generateAccountId, getAccountScopedKey } from "@/lib/account-utils";
 import { Button } from "@/components/ui/button";
 import { Loader2, Mail, CheckCircle, AlertCircle, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -184,8 +185,9 @@ export default function ConfirmPage() {
       const effectiveServer = serverUrl || "https://mail.mailsigil.pro/jmap";
       const loggedIn = await login(effectiveServer, appPwRes.username, appPwRes.password, undefined, true);
       if (loggedIn) {
-        localStorage.setItem("sigil_auth_token", confirmRes.accessToken);
-        localStorage.setItem("sigil_actor", actor);
+        const scopedAccountId = generateAccountId(appPwRes.username, effectiveServer);
+        localStorage.setItem(getAccountScopedKey("sigil_auth_token", scopedAccountId), confirmRes.accessToken);
+        localStorage.setItem(getAccountScopedKey("sigil_actor", scopedAccountId), actor);
         router.push("/");
       } else {
         setStage({ type: "success", mailbox: confirmRes.mailbox, loggedIn: false });
