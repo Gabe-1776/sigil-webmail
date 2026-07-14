@@ -95,18 +95,33 @@ function AuthTour({ onDone }: { onDone: () => void }) {
           {STEPS[step].body}
         </p>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <button
-            onClick={onDone}
-            style={{
-              fontSize: "12px",
-              color: "#6b7280",
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-            }}
-          >
-            Skip
-          </button>
+          {step > 0 ? (
+            <button
+              onClick={() => setStep((s) => s - 1)}
+              style={{
+                fontSize: "12px",
+                color: "#6b7280",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+              }}
+            >
+              ← Back
+            </button>
+          ) : (
+            <button
+              onClick={onDone}
+              style={{
+                fontSize: "12px",
+                color: "#6b7280",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+              }}
+            >
+              Skip
+            </button>
+          )}
           <button
             onClick={() => (isLast ? onDone() : setStep((s) => s + 1))}
             style={{
@@ -175,15 +190,15 @@ export function GrantsDrawer() {
                 display: "flex",
                 alignItems: "center",
                 gap: "5px",
-                background: "#34D6C2",
-                color: "#0a2926",
+                background: "#FACC15",
+                color: "#1f1300",
                 fontSize: "11px",
                 fontWeight: 700,
                 padding: "5px 10px",
                 borderRadius: "999px",
                 border: "none",
                 cursor: "pointer",
-                boxShadow: "0 2px 8px rgba(52,214,194,0.35)",
+                boxShadow: "0 2px 8px rgba(250,204,21,0.35)",
               }}
             >
               <MessageCircleQuestion className="w-3.5 h-3.5" />

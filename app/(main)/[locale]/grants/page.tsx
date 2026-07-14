@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useAuthStore } from "@/stores/auth-store";
 import { useAccountStore } from "@/stores/account-store";
-import { generateAccountId } from "@/lib/account-utils";
+import { generateAccountId, getAccountScopedKey } from "@/lib/account-utils";
 import { useConfig } from "@/hooks/use-config";
 import { ShieldCheck, Mail, Loader2, RefreshCw, Check, X, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -174,6 +174,8 @@ export default function GrantsPage() {
   const login = useAuthStore((s) => s.login);
   const switchAccount = useAuthStore((s) => s.switchAccount);
   const hasAccount = useAccountStore((s) => s.hasAccount);
+  const activeAccountId = useAccountStore((s) => s.activeAccountId);
+  const getAccountById = useAccountStore((s) => s.getAccountById);
   const { jmapServerUrl, devMode } = useConfig();
 
   const [token, setToken] = useState<string | null>(null);
@@ -225,13 +227,15 @@ export default function GrantsPage() {
       headers: { ...opts?.headers, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     });
     if (res.status === 401) {
-      localStorage.removeItem("sigil_auth_token");
-      localStorage.removeItem("sigil_actor");
+      if (activeAccountId) {
+        localStorage.removeItem(getAccountScopedKey("sigil_auth_token", activeAccountId));
+        localStorage.removeItem(getAccountScopedKey("sigil_actor", activeAccountId));
+      }
       router.push("/login");
       throw new Error("Session expired");
     }
     return res.json();
-  }, [token, router]);
+  }, [token, router, activeAccountId]);
 
   const loadAll = useCallback(async (background = false) => {
     if (!token) return;
@@ -261,17 +265,60 @@ export default function GrantsPage() {
     setLoading(false);
   }, [token, authFetch]);
 
+  // Re-reads whenever the account switcher changes activeAccountId — the
+  // sigil session (grants/storage auth, separate from the JMAP mail
+  // session) is stored per-account (see login/page.tsx + confirm/page.tsx),
+  // so switching accounts, or logging out of the active one and falling
+  // back to a remaining account, both correctly update this page instead
+  // of leaving it pinned to whichever account last completed wallet-connect.
   useEffect(() => {
-    const t = localStorage.getItem("sigil_auth_token");
-    const a = localStorage.getItem("sigil_actor");
-    if (!t || !a) { setLoading(false); return; }
+    // Clear the previous account's data immediately so switching never
+    // flashes the old account's grants/agents/storage before the fresh
+    // fetch (triggered below via loadAll's own token dependency) lands.
+    setLinked(null);
+    setIncoming([]);
+    setIssued([]);
+    setAccepted([]);
+    setIncomingPm([]);
+    setSentPm([]);
+    setQuota(null);
+    setLeaseInfo(null);
+    setStorageStatus(null);
+    setTokenExpiresAt(null);
+
+    if (!activeAccountId) { setToken(null); setActor(null); setLoading(false); return; }
+    let t = localStorage.getItem(getAccountScopedKey("sigil_auth_token", activeAccountId));
+    let a = localStorage.getItem(getAccountScopedKey("sigil_actor", activeAccountId));
+
+    // One-time migration: a session established before per-account scoping
+    // shipped (2026-07-14) left its token/actor under the old flat keys.
+    // Only adopt them if the flat sigil_actor actually matches THIS
+    // account's own actor — otherwise it belongs to a different account
+    // that happened to wallet-connect last, and applying it here would
+    // silently show the wrong person's grants.
+    if (!t || !a) {
+      const flatT = localStorage.getItem("sigil_auth_token");
+      const flatA = localStorage.getItem("sigil_actor");
+      const ownUsername = getAccountById(activeAccountId)?.username ?? "";
+      const ownActor = ownUsername.split("@")[0];
+      if (flatT && flatA && ownActor && flatA === ownActor) {
+        localStorage.setItem(getAccountScopedKey("sigil_auth_token", activeAccountId), flatT);
+        localStorage.setItem(getAccountScopedKey("sigil_actor", activeAccountId), flatA);
+        localStorage.removeItem("sigil_auth_token");
+        localStorage.removeItem("sigil_actor");
+        t = flatT;
+        a = flatA;
+      }
+    }
+
+    if (!t || !a) { setToken(null); setActor(null); setLoading(false); return; }
     setToken(t);
     setActor(a);
     try {
       const payload = JSON.parse(atob(t.split(".")[1]));
       if (payload.exp) setTokenExpiresAt(new Date(payload.exp * 1000));
     } catch { /* non-fatal */ }
-  }, []);
+  }, [activeAccountId, getAccountById]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -306,7 +353,7 @@ export default function GrantsPage() {
   // only) is deliberate, not an oversight.
   const openAgentInWebmail = async (agentActor: string) => {
     const key = `openwebmail-${agentActor}`;
-    setActionStatus((s) => ({ ...s, [key]: "Opening…" }));
+    setActionStatus((s) => ({ ...s, [key]: "Adding…" }));
     try {
       const username = `${agentActor}@mailsigil.pro`;
       if (jmapServerUrl && hasAccount(username, jmapServerUrl)) {
@@ -638,8 +685,8 @@ export default function GrantsPage() {
                 className={cn(
                   "text-[11px] font-medium px-2 py-0.5 rounded-full border transition-colors",
                   payFlow?.payToken === opt.symbol
-                    ? "border-[#34D6C2] bg-[#34D6C2]/15 text-[#0e8f80] dark:text-[#34D6C2]"
-                    : "border-border text-muted-foreground hover:border-[#34D6C2]/50",
+                    ? "border-[#FACC15] bg-[#FACC15]/15 text-[#854d0e] dark:text-[#FACC15]"
+                    : "border-border text-muted-foreground hover:border-[#FACC15]/50",
                 )}
               >
                 {opt.symbol}
@@ -676,7 +723,7 @@ export default function GrantsPage() {
               size="sm"
               onClick={() => handlePayWithWallet(invoice, payFlow?.payToken ?? "XMD")}
               disabled={pushStatus === "trying"}
-              className="w-full text-xs bg-[#34D6C2] hover:bg-[#2bc0ae] text-black"
+              className="w-full text-xs bg-[#FACC15] hover:bg-[#EAB308] text-black"
             >
               Pay with XPR Network
             </Button>
@@ -861,7 +908,7 @@ export default function GrantsPage() {
       {/* Mobile: horizontal tab bar at top */}
       <nav className="md:hidden flex overflow-x-auto border-b border-border bg-background shrink-0">
         <div className="flex items-center gap-1 px-2 py-2 shrink-0">
-          <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: "#34D6C2" }} />
+          <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: "#FACC15" }} />
           <span className="font-semibold text-sm whitespace-nowrap">Authorization</span>
         </div>
         <div className="flex items-stretch">
@@ -897,7 +944,7 @@ export default function GrantsPage() {
       {/* Desktop: left sidebar */}
       <aside className="hidden md:flex w-52 shrink-0 border-r border-border flex-col py-4 gap-1">
         <div className="px-4 pb-3 flex items-center gap-2 border-b border-border mb-1">
-          <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: "#34D6C2" }} />
+          <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: "#FACC15" }} />
           <span className="font-semibold text-sm">Authorization</span>
         </div>
         {navItems.map((item) => (
@@ -947,8 +994,8 @@ export default function GrantsPage() {
                 <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                   <Mail className="w-5 h-5 text-primary" />
                 </div>
-                <div>
-                  <p className="font-medium">{actor}@mailsigil.pro</p>
+                <div className="min-w-0">
+                  <p className="font-medium break-words">{actor}@mailsigil.pro</p>
                   {tokenExpiresAt && (
                     <p className="text-xs text-muted-foreground mt-0.5">
                       Auth session valid until {tokenExpiresAt.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
@@ -959,6 +1006,69 @@ export default function GrantsPage() {
               </div>
             </div>
 
+            {actor && storageStatus && (() => {
+              const ownPlan = storageStatus.plans.find((p) => p.mailboxActor === actor);
+              const isPro = ownPlan?.tier === "pro";
+              const isBundled = ownPlan?.source === "sigil-storage-bundle";
+              const now = Date.now();
+              const isInGrace = isPro && !isBundled && ownPlan!.paidUntil !== null && new Date(ownPlan!.paidUntil).getTime() <= now;
+              const daysUntilBlocked = isInGrace
+                ? Math.max(0, Math.ceil((new Date(ownPlan!.graceEndsAt!).getTime() - now) / 86_400_000))
+                : 0;
+              const ownPayFlow = payFlow?.context.kind === "storage-upgrade" && payFlow.context.mailboxActor === actor ? payFlow : null;
+              const quotaBytes = ownPlan?.quotaBytes ?? storageStatus.baseQuotaBytes;
+              const usedPct = ownPlan?.usedBytes != null ? Math.min(100, (ownPlan.usedBytes / quotaBytes) * 100) : null;
+              const bundleTierDisplay = ownPlan?.bundleTier ? (BUNDLE_TIER_DISPLAY[ownPlan.bundleTier] ?? ownPlan.bundleTier) : null;
+
+              return (
+                <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">Storage</p>
+                      <p className={cn("text-xs", isInGrace ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>
+                        {isBundled
+                          ? `Pro ${storageStatus.proQuotaBytes / 1024 ** 3}GB — included free with your Sigil Storage ${bundleTierDisplay} plan`
+                          : isInGrace
+                          ? `Past due since ${new Date(ownPlan!.paidUntil!).toLocaleDateString()} — grace period, drops to ${storageStatus.baseQuotaBytes / 1024 ** 3}GB in ${daysUntilBlocked} day${daysUntilBlocked === 1 ? "" : "s"} if not renewed`
+                          : isPro
+                          ? `Pro ${storageStatus.proQuotaBytes / 1024 ** 3}GB — renews ${new Date(ownPlan!.paidUntil!).toLocaleDateString()}`
+                          : `${storageStatus.baseQuotaBytes / 1024 ** 3}GB base`}
+                      </p>
+                    </div>
+                    {isBundled ? (
+                      <a
+                        href="https://storagesigil.pro"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs h-7 shrink-0 inline-flex items-center px-3 rounded-md border border-border hover:bg-muted"
+                      >
+                        Manage on Sigil Storage
+                      </a>
+                    ) : (
+                      <div className="flex flex-col items-end gap-0.5 shrink-0">
+                        <Button
+                          size="sm"
+                          variant={isPro && !isInGrace ? "outline" : "default"}
+                          onClick={() => handleStartPurchase({ kind: "storage-upgrade", mailboxActor: actor })}
+                          disabled={!!payFlow}
+                          className={cn("text-xs h-7", (!isPro || isInGrace) && "bg-[#FACC15] hover:bg-[#EAB308] text-black")}
+                        >
+                          {isPro ? `Renew — $${storageStatus.priceUsd}` : `Upgrade to Pro — $${storageStatus.priceUsd}/mo`}
+                        </Button>
+                        <span className="text-[10px] text-muted-foreground">({storageStatus.proQuotaBytes / 1024 ** 3}GB)</span>
+                      </div>
+                    )}
+                  </div>
+                  {usedPct !== null && (
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden" title={`${(ownPlan!.usedBytes! / 1024 / 1024).toFixed(1)}MB of ${quotaBytes / 1024 ** 3}GB used`}>
+                      <div className="h-full bg-[#FACC15]" style={{ width: `${usedPct}%` }} />
+                    </div>
+                  )}
+                  {ownPayFlow && renderInvoiceCard()}
+                </div>
+              );
+            })()}
+
             {accepted.length > 0 && (
               <div>
                 <h2 className="text-sm font-medium text-muted-foreground mb-2">Shared Mailboxes</h2>
@@ -967,8 +1077,8 @@ export default function GrantsPage() {
                     const key = `open-${g.grantId}`;
                     return (
                       <div key={g.grantId} className="rounded-lg border border-border bg-card p-4 flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-medium">{g.ownerActor}@mailsigil.pro</p>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium break-words">{g.ownerActor}@mailsigil.pro</p>
                           <p className="text-xs text-muted-foreground">
                             {g.scope} access{g.acceptedAt ? ` · accepted ${timeAgo(g.acceptedAt)}` : ""}
                           </p>
@@ -1072,7 +1182,7 @@ export default function GrantsPage() {
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-xs underline underline-offset-2 hover:opacity-80"
-                  style={{ color: "#34D6C2" }}
+                  style={{ color: "#FACC15" }}
                 >
                   How agent wallets works
                 </a>
@@ -1149,7 +1259,7 @@ export default function GrantsPage() {
                     </Button>
                     <span className="text-[11px] text-muted-foreground">
                       Have an agent? It can renew this automatically —{" "}
-                      <a href={`${AUTH_URL}/agent-wallets-guide.md`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" style={{ color: "#34D6C2" }}>
+                      <a href={`${AUTH_URL}/agent-wallets-guide.md`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" style={{ color: "#FACC15" }}>
                         see how
                       </a>
                     </span>
@@ -1202,65 +1312,6 @@ export default function GrantsPage() {
                 );
               })()}
             </div>
-            {actor && storageStatus && (() => {
-              const ownPlan = storageStatus.plans.find((p) => p.mailboxActor === actor);
-              const isPro = ownPlan?.tier === "pro";
-              const isBundled = ownPlan?.source === "sigil-storage-bundle";
-              const now = Date.now();
-              const isInGrace = isPro && !isBundled && ownPlan!.paidUntil !== null && new Date(ownPlan!.paidUntil).getTime() <= now;
-              const daysUntilBlocked = isInGrace
-                ? Math.max(0, Math.ceil((new Date(ownPlan!.graceEndsAt!).getTime() - now) / 86_400_000))
-                : 0;
-              const ownPayFlow = payFlow?.context.kind === "storage-upgrade" && payFlow.context.mailboxActor === actor ? payFlow : null;
-              const quotaBytes = ownPlan?.quotaBytes ?? storageStatus.baseQuotaBytes;
-              const usedPct = ownPlan?.usedBytes != null ? Math.min(100, (ownPlan.usedBytes / quotaBytes) * 100) : null;
-              const bundleTierDisplay = ownPlan?.bundleTier ? (BUNDLE_TIER_DISPLAY[ownPlan.bundleTier] ?? ownPlan.bundleTier) : null;
-
-              return (
-                <div className="rounded-lg border border-border bg-card p-4 space-y-2">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium">Your mailbox</p>
-                      <p className={cn("text-xs", isInGrace ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>
-                        {isBundled
-                          ? `Pro ${storageStatus.proQuotaBytes / 1024 ** 3}GB — included free with your Sigil Storage ${bundleTierDisplay} plan`
-                          : isInGrace
-                          ? `Past due since ${new Date(ownPlan!.paidUntil!).toLocaleDateString()} — grace period, drops to ${storageStatus.baseQuotaBytes / 1024 ** 3}GB in ${daysUntilBlocked} day${daysUntilBlocked === 1 ? "" : "s"} if not renewed`
-                          : isPro
-                          ? `Pro ${storageStatus.proQuotaBytes / 1024 ** 3}GB — renews ${new Date(ownPlan!.paidUntil!).toLocaleDateString()}`
-                          : `${storageStatus.baseQuotaBytes / 1024 ** 3}GB base`}
-                      </p>
-                    </div>
-                    {isBundled ? (
-                      <a
-                        href="https://storagesigil.pro"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs h-7 shrink-0 inline-flex items-center px-3 rounded-md border border-border hover:bg-muted"
-                      >
-                        Manage on Sigil Storage
-                      </a>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant={isPro && !isInGrace ? "outline" : "default"}
-                        onClick={() => handleStartPurchase({ kind: "storage-upgrade", mailboxActor: actor })}
-                        disabled={!!payFlow}
-                        className={cn("text-xs h-7 shrink-0", (!isPro || isInGrace) && "bg-[#34D6C2] hover:bg-[#2bc0ae] text-black")}
-                      >
-                        {isPro ? `Renew — $${storageStatus.priceUsd}` : `Upgrade to Pro — $${storageStatus.priceUsd}/mo`}
-                      </Button>
-                    )}
-                  </div>
-                  {usedPct !== null && (
-                    <div className="h-1.5 rounded-full bg-muted overflow-hidden" title={`${(ownPlan!.usedBytes! / 1024 / 1024).toFixed(1)}MB of ${quotaBytes / 1024 ** 3}GB used`}>
-                      <div className="h-full bg-[#34D6C2]" style={{ width: `${usedPct}%` }} />
-                    </div>
-                  )}
-                  {ownPayFlow && renderInvoiceCard()}
-                </div>
-              );
-            })()}
             {!linked || (linked.ownedAgents.length === 0 && !linked.ownedBy) ? (
               <div className="rounded-lg border border-dashed border-border p-8 text-center text-muted-foreground text-sm space-y-1">
                 <AlertCircle className="w-5 h-5 mx-auto mb-2 opacity-40" />
@@ -1286,15 +1337,15 @@ export default function GrantsPage() {
                   const openKey = `openwebmail-${agentActor}`;
                   const liveGrant = issued.find(g => g.grantee_actor === agentActor && (g.status === "pending" || g.status === "accepted"));
                   const isSending = actionStatus[offerKey] === "Sending…";
-                  const isOpening = actionStatus[openKey] === "Opening…";
-                  const openError = actionStatus[openKey] && actionStatus[openKey] !== "Opening…" ? actionStatus[openKey] : null;
+                  const isOpening = actionStatus[openKey] === "Adding…";
+                  const openError = actionStatus[openKey] && actionStatus[openKey] !== "Adding…" ? actionStatus[openKey] : null;
                   const confirmingRemove = removingAgent === `confirm-${agentActor}`;
                   const isRemoving = removingAgent === agentActor;
                   return (
                     <div key={agentActor} className="rounded-lg border border-border bg-card p-4 space-y-3">
                       <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-medium">{agentActor}@mailsigil.pro</p>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium break-words">{agentActor}@mailsigil.pro</p>
                           <p className="text-xs text-muted-foreground">Your agent</p>
                         </div>
                         <div className="flex flex-col items-end gap-1.5 shrink-0">
@@ -1302,9 +1353,9 @@ export default function GrantsPage() {
                             size="sm"
                             onClick={() => openAgentInWebmail(agentActor)}
                             disabled={isOpening}
-                            className="text-xs bg-[#34D6C2] hover:bg-[#2bc0ae] text-black"
+                            className="text-xs bg-[#FACC15] hover:bg-[#EAB308] text-black"
                           >
-                            {isOpening ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Opening…</>) : "Open in webmail"}
+                            {isOpening ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Adding…</>) : "Add agent account"}
                           </Button>
                           {liveGrant?.status === "accepted" ? (
                             <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
@@ -1487,15 +1538,18 @@ export default function GrantsPage() {
                                 : `${storageStatus!.baseQuotaBytes / 1024 ** 3}GB base storage`}
                             </span>
                             {!isBundled && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleStartPurchase({ kind: "storage-upgrade", mailboxActor: agentActor })}
-                                disabled={!!payFlow}
-                                className="text-xs h-6"
-                              >
-                                {isPro ? `Renew — $${storageStatus!.priceUsd}` : `Upgrade — $${storageStatus!.priceUsd}/mo`}
-                              </Button>
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleStartPurchase({ kind: "storage-upgrade", mailboxActor: agentActor })}
+                                  disabled={!!payFlow}
+                                  className="text-xs h-6"
+                                >
+                                  {isPro ? `Renew — $${storageStatus!.priceUsd}` : `Upgrade — $${storageStatus!.priceUsd}/mo`}
+                                </Button>
+                                {!isPro && <span className="text-[10px] text-muted-foreground">({storageStatus!.proQuotaBytes / 1024 ** 3}GB)</span>}
+                              </>
                             )}
                             {agentStoragePayFlow && renderInvoiceCard()}
                           </div>
@@ -1518,8 +1572,8 @@ export default function GrantsPage() {
                   return (
                     <div key={agentActor} className="rounded-lg border border-border bg-card p-4 space-y-3">
                       <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-medium">{agentActor}</p>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium break-words">{agentActor}</p>
                           <p className="text-xs text-muted-foreground">Linked agent — no Sigil mailbox yet</p>
                         </div>
                         {cred ? (
@@ -1531,7 +1585,7 @@ export default function GrantsPage() {
                             size="sm"
                             onClick={() => handleClaimAgentMailbox(agentActor)}
                             disabled={isClaiming}
-                            className="text-xs bg-[#34D6C2] hover:bg-[#2bc0ae] text-black shrink-0"
+                            className="text-xs bg-[#FACC15] hover:bg-[#EAB308] text-black shrink-0"
                           >
                             {isClaiming ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Provisioning…</>) : "Claim"}
                           </Button>
@@ -1544,7 +1598,7 @@ export default function GrantsPage() {
                             size="sm"
                             onClick={() => handleStartPurchase({ kind: "new", agentActor })}
                             disabled={!!payFlow}
-                            className="text-xs bg-[#34D6C2] hover:bg-[#2bc0ae] text-black shrink-0"
+                            className="text-xs bg-[#FACC15] hover:bg-[#EAB308] text-black shrink-0"
                           >
                             {rowPayFlow?.phase === "creating" ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Creating invoice…</>)
                               : rowPayFlow?.phase === "waiting" ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Awaiting payment…</>)
@@ -1572,8 +1626,8 @@ export default function GrantsPage() {
                 {linked.ownedBy && (
                   <div className="rounded-lg border border-border bg-card p-4">
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-medium">{linked.ownedBy}@mailsigil.pro</p>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium break-words">{linked.ownedBy}@mailsigil.pro</p>
                         <p className="text-xs text-muted-foreground">Your owner</p>
                       </div>
                       <Button size="sm" variant="outline" onClick={() => handleOfferGrant(linked.ownedBy!)} disabled={!!actionStatus[`offer-${linked.ownedBy}`]} className="text-xs">
@@ -1606,8 +1660,8 @@ export default function GrantsPage() {
                   {incoming.map((g) => (
                     <div key={g.grantId} className="rounded-lg border border-border bg-card p-4">
                       <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-medium">{g.from}</p>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium break-words">{g.from}</p>
                           <p className="text-xs text-muted-foreground">
                             Offering {g.scope} access · {timeAgo(g.createdAt)}
                           </p>
@@ -1639,8 +1693,8 @@ export default function GrantsPage() {
                   {incomingPm.map((pm) => (
                     <div key={pm.id} className="rounded-lg border border-border bg-card p-4">
                       <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-medium">{pm.initiated_by}</p>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium break-words">{pm.initiated_by}</p>
                           <p className="text-xs text-muted-foreground">Wants to create your mailbox · {timeAgo(pm.created_at)}</p>
                           {actionStatus[`pm-${pm.id}`] && (
                             <p className="text-xs text-emerald-500 mt-1">{actionStatus[`pm-${pm.id}`]}</p>
@@ -1676,8 +1730,8 @@ export default function GrantsPage() {
                 {issued.map((g) => (
                   <div key={g.id} className="rounded-lg border border-border bg-card p-4">
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-medium">{g.grantee_actor}</p>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium break-words">{g.grantee_actor}</p>
                         <p className="text-xs text-muted-foreground">{g.scope} access · {timeAgo(g.created_at)}</p>
                         <div className="mt-1"><StatusBadge status={g.status} /></div>
                         {actionStatus[g.id] && (

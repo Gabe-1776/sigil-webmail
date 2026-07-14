@@ -1272,18 +1272,18 @@ export function Sidebar({
               `}</style>
               <div
                 role="dialog"
-                aria-label="AI agent management hint"
+                aria-label="AI agent & human email management hint"
                 style={{
                   position: "absolute",
                   bottom: "calc(100% + 10px)",
                   left: "50%",
                   transform: "translateX(-50%)",
-                  background: "#34D6C2",
-                  color: "#0a2926",
+                  background: "#FACC15",
+                  color: "#1f1300",
                   padding: "10px 12px 8px",
                   borderRadius: "14px",
                   whiteSpace: "nowrap",
-                  boxShadow: "0 4px 14px rgba(52,214,194,0.45)",
+                  boxShadow: "0 4px 14px rgba(250,204,21,0.45)",
                   animation: "sigilHintFloat 2.2s ease-in-out infinite",
                   zIndex: 200,
                 }}
@@ -1304,7 +1304,7 @@ export function Sidebar({
                     background: "none",
                     border: "none",
                     cursor: "pointer",
-                    color: "#0a2926",
+                    color: "#1f1300",
                     opacity: 0.6,
                   }}
                 >
@@ -1323,10 +1323,10 @@ export function Sidebar({
                     padding: 0,
                     marginRight: "14px",
                     cursor: "pointer",
-                    color: "#0a2926",
+                    color: "#1f1300",
                   }}
                 >
-                  AI agent management
+                  AI agent & human email management
                 </button>
                 <button
                   type="button"
@@ -1341,7 +1341,7 @@ export function Sidebar({
                     padding: 0,
                     marginTop: "3px",
                     cursor: "pointer",
-                    color: "#0a2926",
+                    color: "#1f1300",
                     opacity: 0.75,
                   }}
                 >
@@ -1356,14 +1356,14 @@ export function Sidebar({
                   height: 0,
                   borderLeft: "7px solid transparent",
                   borderRight: "7px solid transparent",
-                  borderTop: "7px solid #34D6C2",
+                  borderTop: "7px solid #FACC15",
                   display: "block",
                 }} />
               </div>
             </>
           )}
           <SidebarRow
-            icon={<ShieldCheck className={cn("w-4 h-4 flex-shrink-0", grantsDrawerOpen ? "text-foreground" : "")} style={grantsDrawerOpen ? undefined : { color: "#34D6C2" }} />}
+            icon={<ShieldCheck className={cn("w-4 h-4 flex-shrink-0", grantsDrawerOpen ? "text-foreground" : "")} style={grantsDrawerOpen ? undefined : { color: "#FACC15" }} />}
             label="Authorization"
             isSelected={grantsDrawerOpen}
             onClick={openGrantsDrawer}

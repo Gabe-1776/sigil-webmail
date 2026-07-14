@@ -12,7 +12,7 @@ import { useSettingsStore } from './settings-store';
 import { useAccountStore } from './account-store';
 import { fetchConfig } from '@/hooks/use-config';
 import { debug } from '@/lib/debug';
-import { generateAccountId } from '@/lib/account-utils';
+import { generateAccountId, getAccountScopedKey } from '@/lib/account-utils';
 import { replaceWindowLocation, getPathPrefix, getLocaleFromPath, apiFetch } from '@/lib/browser-navigation';
 import { notifyParent } from '@/lib/iframe-bridge';
 import { snapshotAccount, restoreAccount, clearAllStores, evictAccount, evictAll } from '@/lib/account-state-manager';
@@ -354,8 +354,17 @@ function performFullLogout(set: (state: Partial<AuthState>) => void): void {
   // doesn't re-write stale values.
   try { localStorage.removeItem('auth-storage'); } catch { /* noop */ }
   try { localStorage.removeItem('account-storage'); } catch { /* noop */ }
-  try { localStorage.removeItem('sigil_auth_token'); } catch { /* noop */ }
-  try { localStorage.removeItem('sigil_actor'); } catch { /* noop */ }
+  // Sweep every account-scoped sigil session too (sigil_auth_token::<id>,
+  // sigil_actor::<id> — see lib/account-utils.ts's getAccountScopedKey),
+  // plus the old flat keys pre-dating account-scoping, for anyone with a
+  // session from before this shipped.
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (key === 'sigil_auth_token' || key === 'sigil_actor' || key.startsWith('sigil_auth_token::') || key.startsWith('sigil_actor::')) {
+        localStorage.removeItem(key);
+      }
+    }
+  } catch { /* noop */ }
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -983,6 +992,12 @@ export const useAuthStore = create<AuthState>()(
           clients.delete(accountId);
           evictAccount(accountId);
           accountStore.removeAccount(accountId);
+          // This account's own sigil session (grants/storage auth) — other
+          // accounts' scoped tokens are untouched, only this one is gone.
+          try {
+            localStorage.removeItem(getAccountScopedKey('sigil_auth_token', accountId));
+            localStorage.removeItem(getAccountScopedKey('sigil_actor', accountId));
+          } catch { /* noop */ }
         }
 
         useSettingsStore.getState().disableSync();
