@@ -142,10 +142,6 @@ type PayFlow = {
   error: string;
   payToken: string;
   showManual: boolean;
-  // Feature B: automatic one-tap push to an already-linked phone, tried
-  // first; "failed" (no saved channel, or delivery failed) falls back to
-  // the connect+sign button, never blocks it.
-  pushStatus: "idle" | "trying" | "sent" | "failed";
 };
 
 type Section = "inbox" | "grants" | "incoming" | "issued";
@@ -218,6 +214,7 @@ export default function GrantsContent() {
   // the old subscription flow had, so there's no need for independent
   // per-agent state machines here.
   const [payFlow, setPayFlow] = useState<PayFlow | null>(null);
+  const [signing, setSigning] = useState(false);
   const [releaseFlow, setReleaseFlow] = useState<{ leaseId: string; phase: "confirm" | "releasing" | "error"; error: string } | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [removingAgent, setRemovingAgent] = useState<string | null>(null);
@@ -526,16 +523,22 @@ export default function GrantsContent() {
   async function getWalletSession(forceFresh = false): Promise<{ session: any; reused: boolean }> {
     if (!forceFresh) {
       const cached: any = useWalletSessionStore.getState().session;
+      // TEMP DEBUG (remove once the reuse-not-kicking-in report is
+      // resolved) — logs exactly why a cache hit/miss happened, since
+      // this can only be observed live in a real browser.
+      console.log("[wallet-session] getWalletSession: cached=", !!cached, "cachedActor=", cached?.auth?.actor?.toString(), "currentActor=", actor);
       // Re-verify actor match on every reuse, not just at connect time —
       // the cache is a global singleton, so it could be holding a session
       // from a DIFFERENT logged-in account if the human switched accounts
       // (see components/layout account-switcher) between purchases.
       // Stale-for-this-actor is treated as a plain cache miss, not an error.
       if (cached && actor && cached.auth?.actor?.toString() === actor) {
+        console.log("[wallet-session] reusing cached session — should be 1 sign only");
         return { session: cached, reused: true };
       }
       if (cached) useWalletSessionStore.getState().clearSession();
     }
+    console.log("[wallet-session] no usable cache — doing a fresh connect (forceFresh=" + forceFresh + ")");
     return { session: await freshWalletSession(), reused: false };
   }
 
@@ -562,6 +565,7 @@ export default function GrantsContent() {
     const opt = invoice.payOptions.find((o) => o.symbol === symbol);
     if (!opt || !actor) return;
     setPayFlow((pf) => (pf ? { ...pf, phase: "waiting", error: "" } : pf));
+    setSigning(true);
     const action = {
       account: opt.contract,
       name: "transfer",
@@ -581,6 +585,8 @@ export default function GrantsContent() {
       // Polling effect below picks up the paid status once it confirms on-chain.
     } catch (err: any) {
       setPayFlow((pf) => (pf ? { ...pf, phase: "waiting", error: err?.message ?? String(err) } : pf));
+    } finally {
+      setSigning(false);
     }
   };
 
@@ -592,7 +598,7 @@ export default function GrantsContent() {
   // app if you'd rather (redundant-paths rule) — see
   // BLUEPRINT-slot-renewals.md.
   const handleStartPurchase = async (context: PayContext) => {
-    setPayFlow({ context, phase: "creating", invoice: null, error: "", payToken: "XMD", showManual: false, pushStatus: "idle" });
+    setPayFlow({ context, phase: "creating", invoice: null, error: "", payToken: "XMD", showManual: false });
     try {
       // Same invoice card, different endpoint: storage-upgrade invoices
       // hit /api/storage/upgrade instead of /api/quota/invoice, but the
@@ -605,9 +611,9 @@ export default function GrantsContent() {
         : ["/api/quota/invoice", {}];
       const res = await authFetch(endpoint as string, { method: "POST", body: JSON.stringify(body) });
       if (!res.ok) throw new Error(res.error || "could not create invoice");
-      setPayFlow({ context, phase: "waiting", invoice: res, error: "", payToken: "XMD", showManual: false, pushStatus: "idle" });
+      setPayFlow({ context, phase: "waiting", invoice: res, error: "", payToken: "XMD", showManual: false });
     } catch (err: any) {
-      setPayFlow({ context, phase: "error", invoice: null, error: err?.message ?? String(err), payToken: "XMD", showManual: false, pushStatus: "idle" });
+      setPayFlow({ context, phase: "error", invoice: null, error: err?.message ?? String(err), payToken: "XMD", showManual: false });
     }
   };
 
@@ -647,32 +653,6 @@ export default function GrantsContent() {
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payFlow?.phase, payFlow?.invoice?.invoiceId]);
-
-  // Feature B: try pushing the payment straight to an already-linked
-  // phone before ever showing a "sign in wallet" button — one tap instead
-  // of connect+sign, for anyone who's logged in before. Silently falls
-  // back (pushStatus: "failed") if there's no saved channel or delivery
-  // fails; the existing "Pay with XPR Network" button (freshWalletSession
-  // connect+transact) stays the fallback, never gets removed. Safe here
-  // specifically because every payment on this page is a plain transfer —
-  // never the updateauth-class action WebAuth silently drops over push.
-  const handlePushPayment = async (invoiceId: string, token: string) => {
-    setPayFlow((pf) => (pf ? { ...pf, pushStatus: "trying" } : pf));
-    try {
-      const res = await authFetch(`/api/quota/invoice/${invoiceId}/push`, { method: "POST", body: JSON.stringify({ token }) });
-      setPayFlow((pf) => (pf ? { ...pf, pushStatus: res.ok ? "sent" : "failed" } : pf));
-    } catch {
-      setPayFlow((pf) => (pf ? { ...pf, pushStatus: "failed" } : pf));
-    }
-  };
-
-  // Auto-fire the push attempt once per invoice, the instant it's created.
-  useEffect(() => {
-    if (!payFlow || payFlow.phase !== "waiting" || !payFlow.invoice) return;
-    if (payFlow.pushStatus !== "idle") return;
-    handlePushPayment(payFlow.invoice.invoiceId, payFlow.payToken);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [payFlow?.phase, payFlow?.invoice?.invoiceId, payFlow?.pushStatus]);
 
   const copyToClipboard = (field: string, value: string) => {
     navigator.clipboard.writeText(value).then(() => {
@@ -777,7 +757,6 @@ export default function GrantsContent() {
       );
     }
     if (phase === "waiting" && invoice) {
-      const pushStatus = payFlow?.pushStatus ?? "idle";
       // Restated right before an irreversible transfer — the button that
       // started this flow may be several seconds (or a scroll) away by
       // the time someone actually signs. Uses the invoice's own priceUsd
@@ -798,7 +777,7 @@ export default function GrantsContent() {
             {invoice.payOptions.map((opt) => (
               <button
                 key={opt.symbol}
-                onClick={() => setPayFlow((pf) => (pf ? { ...pf, payToken: opt.symbol, pushStatus: "idle" } : pf))}
+                onClick={() => setPayFlow((pf) => (pf ? { ...pf, payToken: opt.symbol } : pf))}
                 className={cn(
                   "text-[11px] font-medium px-2 py-0.5 rounded-full border transition-colors",
                   payFlow?.payToken === opt.symbol
@@ -810,41 +789,14 @@ export default function GrantsContent() {
               </button>
             ))}
           </div>
-          {pushStatus === "trying" && (
-            <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-              <Loader2 className="w-3 h-3 animate-spin" /> Checking for your phone…
-            </p>
-          )}
-          {pushStatus === "sent" ? (
-            <div className="space-y-1.5">
-              <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-                <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" /> Sent to your phone — open WebAuth to approve. Expires in ~2 minutes.
-              </p>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => handlePushPayment(invoice.invoiceId, payFlow?.payToken ?? "XMD")}
-                  className="text-xs underline underline-offset-2 text-muted-foreground hover:text-foreground"
-                >
-                  Resend to phone
-                </button>
-                <button
-                  onClick={() => handlePayWithWallet(invoice, payFlow?.payToken ?? "XMD")}
-                  className="text-xs underline underline-offset-2 text-muted-foreground hover:text-foreground"
-                >
-                  Sign here instead
-                </button>
-              </div>
-            </div>
-          ) : (
-            <Button
-              size="sm"
-              onClick={() => handlePayWithWallet(invoice, payFlow?.payToken ?? "XMD")}
-              disabled={pushStatus === "trying"}
-              className="w-full text-xs bg-[#FACC15] hover:bg-[#EAB308] text-black"
-            >
-              Pay with XPR Network
-            </Button>
-          )}
+          <Button
+            size="sm"
+            onClick={() => handlePayWithWallet(invoice, payFlow?.payToken ?? "XMD")}
+            disabled={signing}
+            className="w-full text-xs bg-[#FACC15] hover:bg-[#EAB308] text-black"
+          >
+            {signing ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Opening wallet…</>) : "Pay"}
+          </Button>
           {error && <p className="text-xs text-destructive">{error}</p>}
           <p className="text-xs text-muted-foreground flex items-center gap-1.5">
             <Loader2 className="w-3 h-3 animate-spin" /> Waiting for payment… (expires {new Date(invoice.expiresAt).toLocaleTimeString()})

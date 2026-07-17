@@ -651,6 +651,7 @@ export default function LoginPage() {
       // wallet-session-store.ts for why this is safe (in-memory only,
       // never localStorage — doesn't touch the mechanism that caused the
       // 2026-07-10 stale-session hang).
+      console.log("[wallet-session] login: caching session for actor", session?.auth?.actor?.toString());
       useWalletSessionStore.getState().setSession(session);
 
       // Upload the wallet's serialized channel session (fire-and-forget).
