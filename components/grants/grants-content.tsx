@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useAuthStore } from "@/stores/auth-store";
 import { useAccountStore } from "@/stores/account-store";
+import { useWalletSessionStore } from "@/stores/wallet-session-store";
 import { generateAccountId, getAccountScopedKey } from "@/lib/account-utils";
 import { useConfig } from "@/hooks/use-config";
 import { ShieldCheck, Mail, Loader2, RefreshCw, Check, X, AlertCircle, Webhook } from "lucide-react";
@@ -64,7 +65,7 @@ type WebhookSub = {
 type Quota = {
   owner: string;
   agentMailboxes: { used: number; limit: number; max: number; purchasedSlots: number };
-  nextSlot: { priceUsd: number; purchaseEndpoint: string | null };
+  nextSlot: { priceUsd: number; periodDays: number; purchaseEndpoint: string | null };
 };
 
 // 30-day slot leases renewed by plain transfer + memo — the primary
@@ -483,6 +484,13 @@ export default function GrantsContent() {
   // fine. Leases are pay-by-transfer only, never permission-changing, so
   // there's no need for the eosio-detection routing the old subscription
   // flow needed — just connect and sign.
+  //
+  // Always wipes storage and does a genuinely fresh connect — the proven-
+  // safe path (auth/NOTES.md 2026-07-10: a stale @proton/link session made
+  // transact() hang forever with zero feedback). Caches the resulting
+  // session in wallet-session-store so the NEXT purchase in this visit can
+  // skip straight to a transfer signature instead of reconnecting — see
+  // getWalletSession below, which is what callers should actually use.
   async function freshWalletSession(): Promise<any> {
     try {
       const stale: string[] = [];
@@ -505,7 +513,30 @@ export default function GrantsContent() {
     if (actor && connected !== actor) {
       throw new Error(`Connected wallet (${connected}) doesn't match your logged-in account (${actor}) — connect the same wallet you signed in with.`);
     }
+    useWalletSessionStore.getState().setSession(session);
     return session;
+  }
+
+  // Reuses the in-memory session cached by a previous successful connect
+  // (see wallet-session-store.ts for why this is safe where the SDK's own
+  // storage-based restore wasn't) unless forceFresh is set. Returns
+  // whether the session came from cache, so the caller knows whether a
+  // transact failure means "genuinely broken" or just "cache went stale,
+  // worth one silent retry."
+  async function getWalletSession(forceFresh = false): Promise<{ session: any; reused: boolean }> {
+    if (!forceFresh) {
+      const cached: any = useWalletSessionStore.getState().session;
+      // Re-verify actor match on every reuse, not just at connect time —
+      // the cache is a global singleton, so it could be holding a session
+      // from a DIFFERENT logged-in account if the human switched accounts
+      // (see components/layout account-switcher) between purchases.
+      // Stale-for-this-actor is treated as a plain cache miss, not an error.
+      if (cached && actor && cached.auth?.actor?.toString() === actor) {
+        return { session: cached, reused: true };
+      }
+      if (cached) useWalletSessionStore.getState().clearSession();
+    }
+    return { session: await freshWalletSession(), reused: false };
   }
 
   async function transactWithTimeout(session: any, payload: any, opts: any, ms = 90_000): Promise<any> {
@@ -522,20 +553,31 @@ export default function GrantsContent() {
 
   // Signs+broadcasts the transfer for one of the invoice's payOptions
   // directly, instead of making the human copy fields into a separate app.
+  // Tries a cached wallet session first (1 signature — just the transfer);
+  // if that fails, assumes the cache went stale, clears it, and transparently
+  // retries once with a genuinely fresh connect (2 signatures, same as the
+  // old always-fresh behavior) rather than surfacing a confusing error for
+  // what's really just an expired cache.
   const handlePayWithWallet = async (invoice: Invoice, symbol: string) => {
     const opt = invoice.payOptions.find((o) => o.symbol === symbol);
     if (!opt || !actor) return;
     setPayFlow((pf) => (pf ? { ...pf, phase: "waiting", error: "" } : pf));
+    const action = {
+      account: opt.contract,
+      name: "transfer",
+      authorization: [{ actor, permission: "active" }],
+      data: { from: actor, to: invoice.payTo, quantity: opt.quantity, memo: invoice.memo },
+    };
     try {
-      const session = await freshWalletSession();
-      await transactWithTimeout(session, {
-        actions: [{
-          account: opt.contract,
-          name: "transfer",
-          authorization: [{ actor, permission: "active" }],
-          data: { from: actor, to: invoice.payTo, quantity: opt.quantity, memo: invoice.memo },
-        }],
-      }, { broadcast: true });
+      const { session, reused } = await getWalletSession();
+      try {
+        await transactWithTimeout(session, { actions: [action] }, { broadcast: true });
+      } catch (err: any) {
+        if (!reused) throw err; // already a fresh session — this is a real failure
+        useWalletSessionStore.getState().clearSession();
+        const { session: fresh } = await getWalletSession(true);
+        await transactWithTimeout(fresh, { actions: [action] }, { broadcast: true });
+      }
       // Polling effect below picks up the paid status once it confirms on-chain.
     } catch (err: any) {
       setPayFlow((pf) => (pf ? { ...pf, phase: "waiting", error: err?.message ?? String(err) } : pf));
@@ -598,7 +640,7 @@ export default function GrantsContent() {
           loadAll(true);
         } else if (res.status === "expired") {
           clearInterval(interval);
-          setPayFlow((pf) => (pf ? { ...pf, phase: "error", error: "Invoice expired before payment arrived — try again." } : pf));
+          setPayFlow((pf) => (pf ? { ...pf, phase: "error", error: "This invoice expired. If you haven't paid, dismiss this and click the button again. If you already sent a payment, don't send another — it's still recognized for up to 24 hours and will be credited automatically; contact support if it hasn't landed by then." } : pf));
         }
       } catch { /* transient network error — keep polling */ }
     }, 3000);
@@ -736,8 +778,21 @@ export default function GrantsContent() {
     }
     if (phase === "waiting" && invoice) {
       const pushStatus = payFlow?.pushStatus ?? "idle";
+      // Restated right before an irreversible transfer — the button that
+      // started this flow may be several seconds (or a scroll) away by
+      // the time someone actually signs. Uses the invoice's own priceUsd
+      // (the price actually locked in) rather than any live quota state.
+      const days = context.kind === "storage-upgrade" ? (storageStatus?.periodDays ?? 30) : (leaseInfo?.periodDays ?? 30);
+      const purchaseSummary =
+        context.kind === "new" ? `New mailbox slot for ${context.agentActor} — $${invoice.priceUsd}, ${days}-day lease`
+        : context.kind === "storage-upgrade" ? `Sigil Mail Pro for ${context.mailboxActor} — $${invoice.priceUsd}, ${days} days`
+        : (() => {
+            const n = invoice.leaseIds?.length;
+            return n ? `Renewing ${n} slot${n > 1 ? "s" : ""} — $${invoice.priceUsd}, ${days} more days each` : `Renewing your slots — $${invoice.priceUsd}, ${days} more days`;
+          })();
       return (
         <div className="rounded-md border border-border bg-card px-3 py-3 mt-2 space-y-2">
+          <p className="text-xs font-medium">{purchaseSummary}</p>
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Pay in</span>
             {invoice.payOptions.map((opt) => (
@@ -1742,7 +1797,7 @@ export default function GrantsContent() {
                             {rowPayFlow?.phase === "creating" ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Creating invoice…</>)
                               : rowPayFlow?.phase === "waiting" ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Awaiting payment…</>)
                               : rowPayFlow?.phase === "claiming" ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Provisioning…</>)
-                              : `Add a slot — $1 · Pay with XPR Network`}
+                              : `Add a slot — $${quota?.nextSlot.priceUsd ?? 1}/${quota?.nextSlot.periodDays ?? 30}d · Pay with XPR Network`}
                           </Button>
                         )}
                       </div>

@@ -16,6 +16,7 @@ import { generateAccountId, getAccountScopedKey } from '@/lib/account-utils';
 import { replaceWindowLocation, getPathPrefix, getLocaleFromPath, apiFetch } from '@/lib/browser-navigation';
 import { notifyParent } from '@/lib/iframe-bridge';
 import { snapshotAccount, restoreAccount, clearAllStores, evictAccount, evictAll } from '@/lib/account-state-manager';
+import { useWalletSessionStore } from './wallet-session-store';
 import type { Identity } from '@/lib/jmap/types';
 
 interface AuthState {
@@ -991,6 +992,10 @@ export const useAuthStore = create<AuthState>()(
         // Stop refresh timers immediately
         clearRefreshTimer(accountId ?? undefined);
 
+        // A cached wallet-connect session (grants-content.tsx's payment
+        // flow) shouldn't outlive the human session that authorized it.
+        useWalletSessionStore.getState().clearSession();
+
         // Disconnect and null out the client BEFORE clearing stores so the
         // page doesn't fire data-loading effects with the stale client.
         const oldClient = state.client;
@@ -1092,6 +1097,7 @@ export const useAuthStore = create<AuthState>()(
         clients.clear();
         clearAllRefreshTimers();
         evictAll();
+        useWalletSessionStore.getState().clearSession();
 
         performFullLogout(set);
 
