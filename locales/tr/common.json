@@ -189,6 +189,7 @@
     "url_label": "URL",
     "url_required": "URL zorunludur",
     "url_invalid": "Geçerli bir http veya https URL girin",
+    "url_own_domain": "You can't add this site's own URL as an app",
     "icon_label": "Simge",
     "icon_required": "Simge zorunludur",
     "open_mode_label": "Açılış Modu",

@@ -5,14 +5,26 @@ import { X, MessageCircleQuestion } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { useGrantsDrawerStore } from "@/stores/grants-drawer-store";
-import GrantsPage from "@/app/(main)/[locale]/grants/page";
+import GrantsContent from "@/components/grants/grants-content";
 
 const TOUR_KEY = "sigil_auth_tour_v2";
 
 const STEPS = [
   {
+    title: "My Mailbox — your own identity and storage",
+    body: "The first tab is about you, not your agents: your own address and session info, your Storage tier and usage (upgrade to Pro for 50GB there), Webhooks (push notifications, see next), and account deletion (Danger Zone).",
+  },
+  {
+    title: "Webhooks — a push instead of a poll",
+    body: "In My Mailbox, register any HTTPS URL and Sigil sends it a signed request the moment new mail arrives — handy if you or an agent run a service that should react instantly instead of checking on a timer. You get a signing secret when you add one; copy it right then, it's shown exactly once and every push is HMAC-signed with it so you can verify it's really from Sigil.",
+  },
+  {
     title: "Your agent has its own mailbox",
     body: "When your AI agent is registered in the XPR agentcore registry and linked to your wallet, it gets its own address like agentbot@mailsigil.pro — separate from yours.",
+  },
+  {
+    title: "Two ways an agent's mailbox reaches your switcher",
+    body: "If YOU claimed the agent's mailbox and are paying for its slot, it's under Agent Wallets — click \"Add agent account\", no offer needed, you already own it. If your AGENT set up its own mailbox independently and wants to share it with you, that's a grant offer instead — it shows up under Incoming Offers, and you have to accept it.",
   },
   {
     title: "Offer your agent access",
@@ -24,15 +36,11 @@ const STEPS = [
   },
   {
     title: "Incoming Offers",
-    body: "Want to see what your agent is doing? Ask your agent to offer you access to its mailbox. That offer shows up here — accept it and your agent's inbox gets added to your sidebar.",
-  },
-  {
-    title: "Add Mailbox",
-    body: "Once you've accepted a shared mailbox offer, go to Shared Mailboxes and click Add Mailbox to pin it to your sidebar. It shows up just like your own inbox.",
+    body: "This is where the other path from before lands: your agent set up its own mailbox independently and is offering to share it with you. Accept it and it appears under Shared Mailboxes in My Mailbox — click Add Mailbox there to pin it to your sidebar, just like your own inbox.",
   },
   {
     title: "Revoke any time",
-    body: "Go to Issued Grants and click Revoke. Access is removed immediately — your agent loses access the moment you confirm.",
+    body: "Go to Issued Grants and click Revoke. Access is removed immediately — your agent loses access to your human mailbox the moment you confirm.",
   },
 ];
 
@@ -59,6 +67,7 @@ function AuthTour({ onDone }: { onDone: () => void }) {
         role="dialog"
         aria-modal="true"
         style={{
+          position: "relative",
           background: "#ffffff",
           border: "1px solid #e5e7eb",
           borderRadius: "16px",
@@ -69,6 +78,23 @@ function AuthTour({ onDone }: { onDone: () => void }) {
           color: "#111827",
         }}
       >
+        <button
+          onClick={onDone}
+          aria-label="Close"
+          style={{
+            position: "absolute",
+            top: "16px",
+            right: "16px",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            color: "#6b7280",
+            padding: "4px",
+            lineHeight: 0,
+          }}
+        >
+          <X className="w-4 h-4" />
+        </button>
         <p
           style={{
             fontSize: "11px",
@@ -77,9 +103,10 @@ function AuthTour({ onDone }: { onDone: () => void }) {
             letterSpacing: "0.05em",
             color: "#6b7280",
             marginBottom: "12px",
+            paddingRight: "20px",
           }}
         >
-          How agent access works · {step + 1} of {STEPS.length}
+          How authorization works · {step + 1} of {STEPS.length}
         </p>
         <h3 style={{ fontSize: "16px", fontWeight: 600, marginBottom: "8px" }}>
           {STEPS[step].title}
@@ -109,18 +136,7 @@ function AuthTour({ onDone }: { onDone: () => void }) {
               ← Back
             </button>
           ) : (
-            <button
-              onClick={onDone}
-              style={{
-                fontSize: "12px",
-                color: "#6b7280",
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-              }}
-            >
-              Skip
-            </button>
+            <span />
           )}
           <button
             onClick={() => (isLast ? onDone() : setStep((s) => s + 1))}
@@ -214,7 +230,7 @@ export function GrantsDrawer() {
           </div>
         </div>
         <div className="flex-1 overflow-hidden">
-          <GrantsPage />
+          <GrantsContent />
         </div>
       </div>
     </>

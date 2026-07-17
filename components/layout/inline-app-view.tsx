@@ -38,7 +38,19 @@ export function InlineAppView({ apps, activeAppId, onClose, className }: InlineA
               'absolute inset-0 w-full h-full border-0',
               app.id !== activeAppId && 'hidden'
             )}
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+            // No allow-same-origin: an inline app's URL is arbitrary
+            // (user-supplied, see sidebar-apps-settings.tsx's addSidebarApp
+            // validation), so this iframe must stay a genuinely opaque
+            // origin. allow-scripts + allow-same-origin together is the
+            // classic sandbox-escape combo — if a user ever added a URL
+            // that resolves same-origin as this app (our own domain, or a
+            // redirect back to it), that combination would let the framed
+            // page reach window.parent and read the real session's
+            // localStorage/DOM. No allow-popups-to-escape-sandbox either:
+            // a popup opened from inside an inline app must stay just as
+            // sandboxed as the app itself, so it can't run a fully
+            // unrestricted phishing tab next to the real Sigil Mail chrome.
+            sandbox="allow-scripts allow-forms allow-popups"
             referrerPolicy="no-referrer"
             loading="lazy"
           />

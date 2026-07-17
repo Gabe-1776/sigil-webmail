@@ -189,6 +189,7 @@
     "url_label": "URL",
     "url_required": "Необхідна URL-адреса",
     "url_invalid": "Введіть дійсну URL-адресу http або https",
+    "url_own_domain": "You can't add this site's own URL as an app",
     "icon_label": "значок",
     "icon_required": "Потрібен значок",
     "open_mode_label": "Відкритий режим",

@@ -189,6 +189,7 @@
     "url_label": "URL",
     "url_required": "URL er påkrævet",
     "url_invalid": "Indtast en gyldig http- eller https-URL",
+    "url_own_domain": "You can't add this site's own URL as an app",
     "icon_label": "Ikon",
     "icon_required": "Ikon er påkrævet",
     "open_mode_label": "Åbningstilstand",

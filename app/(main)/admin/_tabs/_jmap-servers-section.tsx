@@ -126,7 +126,7 @@ export function JmapServersSection({ value, source, onChange, onRevert }: Props)
             )}
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Each entry appears as an option on the login dropdown. Leave the list empty to fall back to the single <code className="text-[11px]">JMAP Server URL</code> above.
+            Each entry appears as an option on the login dropdown. Leave the list empty to fall back to the single <code className="text-[11px]">JMAP Server URL</code>{" "}above.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">

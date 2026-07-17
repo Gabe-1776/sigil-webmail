@@ -189,6 +189,7 @@
     "url_label": "URL",
     "url_required": "URL is vereist",
     "url_invalid": "Voer een geldige http- of https-URL in",
+    "url_own_domain": "You can't add this site's own URL as an app",
     "icon_label": "Pictogram",
     "icon_required": "Pictogram is vereist",
     "open_mode_label": "Openingsmodus",

@@ -189,6 +189,7 @@
     "url_label": "URL",
     "url_required": "L'URL est requise",
     "url_invalid": "Entrez une URL http ou https valide",
+    "url_own_domain": "You can't add this site's own URL as an app",
     "icon_label": "Icône",
     "icon_required": "L'icône est requise",
     "open_mode_label": "Mode d'ouverture",

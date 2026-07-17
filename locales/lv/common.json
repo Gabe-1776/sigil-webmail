@@ -189,6 +189,7 @@
     "url_label": "URL adrese",
     "url_required": "URL ir obligāts",
     "url_invalid": "Ievadiet derīgu http vai https URL",
+    "url_own_domain": "You can't add this site's own URL as an app",
     "icon_label": "Ikona",
     "icon_required": "Ikona ir obligāta",
     "open_mode_label": "Atvēršanas režīms",

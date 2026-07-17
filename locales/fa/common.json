@@ -189,6 +189,7 @@
     "url_label": "آدرس",
     "url_required": "آدرس الزامی است",
     "url_invalid": "آدرس http یا https معتبر وارد کنید",
+    "url_own_domain": "You can't add this site's own URL as an app",
     "icon_label": "آیکون",
     "icon_required": "آیکون الزامی است",
     "open_mode_label": "حالت باز کردن",

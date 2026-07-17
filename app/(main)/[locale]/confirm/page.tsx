@@ -333,12 +333,12 @@ function ConfirmContent({
         <p className="text-sm text-muted-foreground">
           {approvingForSomeoneElse ? (
             <>
-              <span className="font-medium text-foreground">{info.initiatedBy}</span> wants to create a Sigil Mail account
-              for your linked agent <span className="font-medium text-foreground">{info.forActor}</span> — approve as its owner
+              <span className="font-medium text-foreground">{info.initiatedBy}</span>{" "}wants to create a Sigil Mail account
+              for your linked agent <span className="font-medium text-foreground">{info.forActor}</span>{" "}— approve as its owner
             </>
           ) : (
             <>
-              <span className="font-medium text-foreground">{info.initiatedBy}</span> wants to create a Sigil Mail account for you
+              <span className="font-medium text-foreground">{info.initiatedBy}</span>{" "}wants to create a Sigil Mail account for you
             </>
           )}
         </p>
@@ -365,7 +365,7 @@ function ConfirmContent({
           </Button>
         )}
         <p className="text-xs text-muted-foreground">
-          You'll be asked to connect your <span className="font-medium">{info.confirmerActor}</span> wallet to approve this request.
+          You'll be asked to connect your <span className="font-medium">{info.confirmerActor}</span>{" "}wallet to approve this request.
           No XPR will be spent.
         </p>
       </div>

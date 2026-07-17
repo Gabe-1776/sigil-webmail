@@ -6,7 +6,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useAccountStore } from "@/stores/account-store";
 import { generateAccountId, getAccountScopedKey } from "@/lib/account-utils";
 import { useConfig } from "@/hooks/use-config";
-import { ShieldCheck, Mail, Loader2, RefreshCw, Check, X, AlertCircle } from "lucide-react";
+import { ShieldCheck, Mail, Loader2, RefreshCw, Check, X, AlertCircle, Webhook } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -51,6 +51,37 @@ type LinkedAccounts = {
   ownedBy: string | null;
   ownedAgents: string[];
   ownedAgentsDetailed: { actor: string; hasMailbox: boolean }[];
+};
+
+type WebhookSub = {
+  id: string;
+  url: string;
+  createdAt: string;
+  lastDeliveredAt: string | null;
+  lastStatus: string | null;
+};
+
+// Activity tab — real, live data only (see server.ts's /api/activity doc
+// comment for why per-sender rate-limit usage isn't included: Stalwart
+// only exposes that via an Enterprise-licensed metrics API this
+// deployment doesn't have).
+type RecentMailActivity = {
+  subject: string;
+  receivedAt: string;
+  spamScore: string | null;
+  spamStatus: string | null;
+};
+type DeliverabilityStatus = {
+  spf: boolean;
+  dkim: boolean;
+  dmarc: boolean;
+  mtaSts: boolean;
+  checkedAt: string;
+} | null;
+type ActivityData = {
+  recentMail: RecentMailActivity[];
+  webhooks: { id: string; url: string; lastDeliveredAt: string | null; lastStatus: string | null }[];
+  deliverability: DeliverabilityStatus;
 };
 
 type Quota = {
@@ -101,17 +132,12 @@ type Invoice = {
 type StoragePlanStatus = {
   mailboxActor: string;
   tier: "base" | "pro";
-  source?: "paid" | "sigil-storage-bundle";
-  bundleTier?: string; // Sigil Storage's own tier key (e.g. "proplus") when source is the bundle
+  source?: "paid";
   quotaBytes: number;
   usedBytes: number | null;
   paidUntil: string | null;
   graceEndsAt: string | null;
 };
-// Duplicated from sigil-data's STORAGE_TIERS display names (no cross-repo
-// import) — keep in sync by hand per BLUEPRINT-family-storage-tiers.md.
-// Only the bundle-qualifying tiers need an entry here.
-const BUNDLE_TIER_DISPLAY: Record<string, string> = { proplus: "Pro+", max: "Max", maxplus: "Max+" };
 type StorageStatus = {
   owner: string;
   baseQuotaBytes: number;
@@ -144,7 +170,19 @@ type PayFlow = {
   pushStatus: "idle" | "trying" | "sent" | "failed";
 };
 
-type Section = "inbox" | "grants" | "incoming" | "issued";
+type Section = "inbox" | "grants" | "incoming" | "issued" | "activity";
+
+// Overspend guard (task #148) — UX consistency only, the backend is the
+// real boundary (auth/src/grant-store.ts's isEligibleForRenewal /
+// RENEW_ELIGIBILITY_DAYS, kept in sync by hand since this is a separate
+// deployable). Mirrors the same rule: renewable once within 7 days of
+// paidUntil, or already past it (grace/suspended stays renewable — a
+// negative diff naturally passes `<=`). Showing a "Renew" button that the
+// backend would just 400 is worse than not showing one.
+const RENEW_ELIGIBILITY_DAYS = 7;
+function isEligibleForRenewal(paidUntil: string): boolean {
+  return new Date(paidUntil).getTime() - Date.now() <= RENEW_ELIGIBILITY_DAYS * 86_400_000;
+}
 
 function timeAgo(iso: string | null): string {
   if (!iso) return "";
@@ -169,7 +207,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-export default function GrantsPage() {
+export default function GrantsContent() {
   const router = useRouter();
   const login = useAuthStore((s) => s.login);
   const switchAccount = useAuthStore((s) => s.switchAccount);
@@ -206,6 +244,13 @@ export default function GrantsPage() {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [removingAgent, setRemovingAgent] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<Record<string, string>>({});
+  const [webhooks, setWebhooks] = useState<WebhookSub[]>([]);
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookAdding, setWebhookAdding] = useState(false);
+  const [webhookError, setWebhookError] = useState("");
+  const [newWebhookSecret, setNewWebhookSecret] = useState<{ id: string; secret: string } | null>(null);
+  const [deletingWebhookId, setDeletingWebhookId] = useState<string | null>(null);
+  const [activity, setActivity] = useState<ActivityData | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -241,7 +286,7 @@ export default function GrantsPage() {
     if (!token) return;
     if (!background) setLoading(true);
     try {
-      const [linkedRes, incomingRes, issuedRes, acceptedRes, incomingPmRes, sentPmRes, quotaRes, leaseInfoRes, storageStatusRes] = await Promise.all([
+      const [linkedRes, incomingRes, issuedRes, acceptedRes, incomingPmRes, sentPmRes, quotaRes, leaseInfoRes, storageStatusRes, webhooksRes, activityRes] = await Promise.all([
         authFetch("/api/agentcore/linked"),
         authFetch("/api/grants/incoming"),
         authFetch("/api/grants/issued"),
@@ -251,11 +296,15 @@ export default function GrantsPage() {
         authFetch("/api/quota").catch(() => null),
         authFetch("/api/slots/leases").catch(() => null),
         authFetch("/api/storage/status").catch(() => null),
+        authFetch("/api/webhooks").catch(() => null),
+        authFetch("/api/activity").catch(() => null),
       ]);
       if (linkedRes.ownedAgents) setLinked(linkedRes);
       if (quotaRes?.ok) setQuota(quotaRes);
       if (leaseInfoRes?.ok) setLeaseInfo(leaseInfoRes);
       if (storageStatusRes?.ok) setStorageStatus(storageStatusRes);
+      if (webhooksRes?.ok) setWebhooks(webhooksRes.webhooks ?? []);
+      if (activityRes?.ok) setActivity({ recentMail: activityRes.recentMail ?? [], webhooks: activityRes.webhooks ?? [], deliverability: activityRes.deliverability ?? null });
       setIncoming(incomingRes.grants ?? []);
       setIssued(issuedRes.grants ?? []);
       setAccepted(acceptedRes.grants ?? []);
@@ -285,6 +334,9 @@ export default function GrantsPage() {
     setLeaseInfo(null);
     setStorageStatus(null);
     setTokenExpiresAt(null);
+    setWebhooks([]);
+    setNewWebhookSecret(null);
+    setWebhookError("");
 
     if (!activeAccountId) { setToken(null); setActor(null); setLoading(false); return; }
     let t = localStorage.getItem(getAccountScopedKey("sigil_auth_token", activeAccountId));
@@ -628,6 +680,42 @@ export default function GrantsPage() {
     }
   };
 
+  // Push notifications for new mail — the register call returns the HMAC
+  // signing secret exactly once (never stored server-side in retrievable
+  // form, same pattern as an app-password), so it's held in newWebhookSecret
+  // just long enough for the human to copy it, then discarded on dismiss.
+  const handleAddWebhook = async () => {
+    const url = webhookUrl.trim();
+    if (!url) return;
+    setWebhookAdding(true);
+    setWebhookError("");
+    try {
+      const res = await authFetch("/api/webhooks", { method: "POST", body: JSON.stringify({ url }) });
+      if (!res.ok) throw new Error(res.error || "could not register webhook");
+      setWebhooks((w) => [...w, { id: res.id, url: res.url, createdAt: res.createdAt, lastDeliveredAt: null, lastStatus: null }]);
+      setNewWebhookSecret({ id: res.id, secret: res.secret });
+      setWebhookUrl("");
+    } catch (err: any) {
+      setWebhookError(err?.message ?? String(err));
+    } finally {
+      setWebhookAdding(false);
+    }
+  };
+
+  const handleDeleteWebhook = async (id: string) => {
+    setDeletingWebhookId(id);
+    try {
+      const res = await authFetch(`/api/webhooks/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(res.error || "could not remove webhook");
+      setWebhooks((w) => w.filter((wh) => wh.id !== id));
+      if (newWebhookSecret?.id === id) setNewWebhookSecret(null);
+    } catch (err: any) {
+      setWebhookError(err?.message ?? String(err));
+    } finally {
+      setDeletingWebhookId(null);
+    }
+  };
+
   // Shared render for the in-progress payFlow, whichever context triggered
   // it (buying a new slot inline in that agent's row, or renewing all
   // leases in the manage-slots section above). Primary action is signing
@@ -741,7 +829,7 @@ export default function GrantsPage() {
           {payFlow?.showManual && (
             <div className="space-y-2 pt-1 border-t border-border">
               <p className="text-xs text-muted-foreground">
-                Send ANY ONE of these amounts to <span className="font-mono">{invoice.payTo}</span> with memo{" "}
+                Send ANY ONE of these amounts to <span className="font-mono">{invoice.payTo}</span>{" "}with memo{" "}
                 <span className="font-mono">{invoice.memo}</span>.
               </p>
               <div className="space-y-1">
@@ -901,6 +989,7 @@ export default function GrantsPage() {
     { id: "grants", label: "Agent Wallets", badge: (linked?.ownedAgents.length ?? 0) + (linked?.ownedBy ? 1 : 0) || undefined },
     { id: "incoming", label: "Incoming Offers", badge: incomingCount > 0 ? incomingCount : undefined },
     { id: "issued", label: "Issued Grants" },
+    { id: "activity", label: "Activity" },
   ];
 
   return (
@@ -1009,16 +1098,14 @@ export default function GrantsPage() {
             {actor && storageStatus && (() => {
               const ownPlan = storageStatus.plans.find((p) => p.mailboxActor === actor);
               const isPro = ownPlan?.tier === "pro";
-              const isBundled = ownPlan?.source === "sigil-storage-bundle";
               const now = Date.now();
-              const isInGrace = isPro && !isBundled && ownPlan!.paidUntil !== null && new Date(ownPlan!.paidUntil).getTime() <= now;
+              const isInGrace = isPro && ownPlan!.paidUntil !== null && new Date(ownPlan!.paidUntil).getTime() <= now;
               const daysUntilBlocked = isInGrace
                 ? Math.max(0, Math.ceil((new Date(ownPlan!.graceEndsAt!).getTime() - now) / 86_400_000))
                 : 0;
               const ownPayFlow = payFlow?.context.kind === "storage-upgrade" && payFlow.context.mailboxActor === actor ? payFlow : null;
               const quotaBytes = ownPlan?.quotaBytes ?? storageStatus.baseQuotaBytes;
               const usedPct = ownPlan?.usedBytes != null ? Math.min(100, (ownPlan.usedBytes / quotaBytes) * 100) : null;
-              const bundleTierDisplay = ownPlan?.bundleTier ? (BUNDLE_TIER_DISPLAY[ownPlan.bundleTier] ?? ownPlan.bundleTier) : null;
 
               return (
                 <div className="rounded-lg border border-border bg-card p-4 space-y-2">
@@ -1026,26 +1113,18 @@ export default function GrantsPage() {
                     <div className="min-w-0">
                       <p className="text-sm font-medium">Storage</p>
                       <p className={cn("text-xs", isInGrace ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>
-                        {isBundled
-                          ? `Pro ${storageStatus.proQuotaBytes / 1024 ** 3}GB — included free with your Sigil Storage ${bundleTierDisplay} plan`
-                          : isInGrace
+                        {isInGrace
                           ? `Past due since ${new Date(ownPlan!.paidUntil!).toLocaleDateString()} — grace period, drops to ${storageStatus.baseQuotaBytes / 1024 ** 3}GB in ${daysUntilBlocked} day${daysUntilBlocked === 1 ? "" : "s"} if not renewed`
                           : isPro
                           ? `Pro ${storageStatus.proQuotaBytes / 1024 ** 3}GB — renews ${new Date(ownPlan!.paidUntil!).toLocaleDateString()}`
                           : `${storageStatus.baseQuotaBytes / 1024 ** 3}GB base`}
                       </p>
                     </div>
-                    {isBundled ? (
-                      <a
-                        href="https://storagesigil.pro"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs h-7 shrink-0 inline-flex items-center px-3 rounded-md border border-border hover:bg-muted"
-                      >
-                        Manage on Sigil Storage
-                      </a>
-                    ) : (
-                      <div className="flex flex-col items-end gap-0.5 shrink-0">
+                    <div className="flex flex-col items-end gap-0.5 shrink-0">
+                      {/* Overspend guard (task #148): once Pro and comfortably
+                          active (not in grace, not near expiry), there's
+                          nothing to renew yet — the backend would 400 this. */}
+                      {(!isPro || isInGrace || isEligibleForRenewal(ownPlan!.paidUntil!)) && (
                         <Button
                           size="sm"
                           variant={isPro && !isInGrace ? "outline" : "default"}
@@ -1055,9 +1134,9 @@ export default function GrantsPage() {
                         >
                           {isPro ? `Renew — $${storageStatus.priceUsd}` : `Upgrade to Pro — $${storageStatus.priceUsd}/mo`}
                         </Button>
-                        <span className="text-[10px] text-muted-foreground">({storageStatus.proQuotaBytes / 1024 ** 3}GB)</span>
-                      </div>
-                    )}
+                      )}
+                      <span className="text-[10px] text-muted-foreground">({storageStatus.proQuotaBytes / 1024 ** 3}GB)</span>
+                    </div>
                   </div>
                   {usedPct !== null && (
                     <div className="h-1.5 rounded-full bg-muted overflow-hidden" title={`${(ownPlan!.usedBytes! / 1024 / 1024).toFixed(1)}MB of ${quotaBytes / 1024 ** 3}GB used`}>
@@ -1068,6 +1147,87 @@ export default function GrantsPage() {
                 </div>
               );
             })()}
+
+            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">Webhooks</p>
+                  <p className="text-xs text-muted-foreground">
+                    Get a push notification when new mail arrives here — no polling needed. Useful if you or an agent run a service that reacts to mail. Up to 5.
+                  </p>
+                </div>
+                <Webhook className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+              </div>
+
+              {webhooks.length > 0 && (
+                <div className="space-y-1.5">
+                  {webhooks.map((wh) => (
+                    <div key={wh.id} className="flex items-center justify-between gap-2 rounded-md bg-muted/30 px-2.5 py-1.5">
+                      <div className="min-w-0">
+                        <p className="text-xs font-mono break-all">{wh.url}</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {wh.lastDeliveredAt ? `last delivered ${timeAgo(wh.lastDeliveredAt)}${wh.lastStatus ? ` · ${wh.lastStatus}` : ""}` : "no deliveries yet"}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteWebhook(wh.id)}
+                        disabled={deletingWebhookId === wh.id}
+                        className="text-muted-foreground hover:text-destructive shrink-0 p-1"
+                        aria-label="Remove webhook"
+                      >
+                        {deletingWebhookId === wh.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {newWebhookSecret && (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 space-y-1.5">
+                  <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                    Signing secret — copy it now, it won&apos;t be shown again
+                  </p>
+                  <div className="flex items-center justify-between gap-2 bg-background rounded px-2 py-1">
+                    <span className="text-xs font-mono break-all">{newWebhookSecret.secret}</span>
+                    <button
+                      onClick={() => copyToClipboard("webhook-secret", newWebhookSecret.secret)}
+                      className="text-xs text-muted-foreground hover:text-foreground shrink-0"
+                    >
+                      {copiedField === "webhook-secret" ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    Every delivery is HMAC-SHA256 signed with this secret so you can verify it really came from Sigil.
+                  </p>
+                  <button onClick={() => setNewWebhookSecret(null)} className="text-[10px] text-muted-foreground underline underline-offset-2">
+                    Done
+                  </button>
+                </div>
+              )}
+
+              {webhooks.length < 5 ? (
+                <div className="space-y-1.5 pt-1 border-t border-border">
+                  <div className="flex gap-1.5">
+                    <input
+                      type="url"
+                      value={webhookUrl}
+                      onChange={(e) => setWebhookUrl(e.target.value)}
+                      placeholder="https://your-endpoint.example.com/hook"
+                      disabled={webhookAdding}
+                      className="flex-1 min-w-0 text-xs px-2.5 py-1.5 rounded-md border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                    <Button size="sm" onClick={handleAddWebhook} disabled={webhookAdding || !webhookUrl.trim()} className="text-xs h-7 shrink-0">
+                      {webhookAdding ? <Loader2 className="w-3 h-3 animate-spin" /> : "Add"}
+                    </Button>
+                  </div>
+                  {webhookError && <p className="text-xs text-destructive">{webhookError}</p>}
+                </div>
+              ) : (
+                <p className="text-[10px] text-muted-foreground pt-1 border-t border-border">
+                  Limit of 5 webhooks reached — remove one to add another.
+                </p>
+              )}
+            </div>
 
             {accepted.length > 0 && (
               <div>
@@ -1121,10 +1281,10 @@ export default function GrantsPage() {
               ) : (
                 <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 space-y-3">
                   <p className="text-sm font-medium text-destructive">
-                    Permanently delete <strong>{actor}@mailsigil.pro</strong> and all its email?
+                    Permanently delete <strong className="break-all">{actor}@mailsigil.pro</strong>{" "}and all its email?
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    Type <strong>DELETE</strong> to confirm — this cannot be undone.
+                    Type <strong>DELETE</strong>{" "}to confirm — this cannot be undone.
                   </p>
                   <input
                     type="text"
@@ -1242,21 +1402,28 @@ export default function GrantsPage() {
                 // card now (renews/Stop renewing live there) — this dropdown is
                 // only for leases nothing claimed yet (spare/unassigned).
                 const unattached = leaseInfo.leases.filter((l) => !l.agentActor);
+                // Overspend guard (task #148): only bundle leases the backend
+                // will actually accept (near-expiry or past due) — a fresh
+                // lease with weeks left just gets left out of the count/price
+                // rather than causing the whole "Renew all" to 400.
+                const dueLeases = leaseInfo.leases.filter((l) => isEligibleForRenewal(l.paidUntil));
                 return (
                 <div className="mt-2 space-y-1.5">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs text-muted-foreground">
                       Renews by {new Date(leaseInfo.leases.reduce((earliest, l) => (l.paidUntil < earliest ? l.paidUntil : earliest), leaseInfo.leases[0].paidUntil)).toLocaleDateString()}
                     </span>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleStartPurchase({ kind: "renew" })}
-                      disabled={!!payFlow}
-                      className="text-xs h-6"
-                    >
-                      Renew all (${leaseInfo.leases.length * leaseInfo.priceUsdPerSlot})
-                    </Button>
+                    {dueLeases.length > 0 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleStartPurchase({ kind: "renew", leaseIds: dueLeases.map((l) => l.id) })}
+                        disabled={!!payFlow}
+                        className="text-xs h-6"
+                      >
+                        Renew {dueLeases.length < leaseInfo.leases.length ? `${dueLeases.length} due` : "all"} (${dueLeases.length * leaseInfo.priceUsdPerSlot})
+                      </Button>
+                    )}
                     <span className="text-[11px] text-muted-foreground">
                       Have an agent? It can renew this automatically —{" "}
                       <a href={`${AUTH_URL}/agent-wallets-guide.md`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" style={{ color: "#FACC15" }}>
@@ -1381,14 +1548,14 @@ export default function GrantsPage() {
                         <div className="rounded-md bg-primary/8 border border-primary/20 px-3 py-2 flex items-start gap-2">
                           <ShieldCheck className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
                           <p className="text-xs text-muted-foreground">
-                            Grant sent — tell <span className="font-medium text-foreground">{agentActor}</span> to accept it. This page will update automatically for 2 minutes, or hit Refresh if the status hasn&apos;t changed.
+                            Grant sent — tell <span className="font-medium text-foreground">{agentActor}</span>{" "}to accept it. This page will update automatically for 2 minutes, or hit Refresh if the status hasn&apos;t changed.
                           </p>
                         </div>
                       )}
                       {confirmingRemove && (
                         <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 space-y-2">
                           <p className="text-xs text-muted-foreground">
-                            Permanently delete <strong className="text-foreground">{agentActor}@mailsigil.pro</strong> and all its email? This frees the slot but can&apos;t be undone.
+                            Permanently delete <strong className="text-foreground break-all">{agentActor}@mailsigil.pro</strong>{" "}and all its email? This frees the slot but can&apos;t be undone.
                           </p>
                           <div className="flex gap-2">
                             <Button size="sm" variant="destructive" onClick={() => handleRemoveAgentMailbox(agentActor)} disabled={isRemoving} className="text-xs">
@@ -1455,15 +1622,17 @@ export default function GrantsPage() {
                                   ? `Past due since ${new Date(lease.paidUntil).toLocaleDateString()} — grace period, blocks in ${daysUntilBlocked} day${daysUntilBlocked === 1 ? "" : "s"} if not renewed`
                                   : `Manual renewal — renews ${new Date(lease.paidUntil).toLocaleDateString()}`}
                               </span>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleStartPurchase({ kind: "renew", leaseIds: [lease.id], cardAgentActor: agentActor })}
-                                disabled={!!payFlow}
-                                className="text-xs h-6"
-                              >
-                                Renew (${leaseInfo?.priceUsdPerSlot})
-                              </Button>
+                              {isEligibleForRenewal(lease.paidUntil) && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleStartPurchase({ kind: "renew", leaseIds: [lease.id], cardAgentActor: agentActor })}
+                                  disabled={!!payFlow}
+                                  className="text-xs h-6"
+                                >
+                                  Renew (${leaseInfo?.priceUsdPerSlot})
+                                </Button>
+                              )}
                               {releaseFlow?.leaseId === lease.id ? (
                                 releaseFlow.phase === "confirm" ? (
                                   <div className="basis-full w-full rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-2 space-y-1.5">
@@ -1518,39 +1687,36 @@ export default function GrantsPage() {
                         const plan = storageStatus?.plans?.find((p) => p.mailboxActor === agentActor);
                         if (!plan) return null;
                         const isPro = plan.tier === "pro";
-                        const isBundled = plan.source === "sigil-storage-bundle";
                         const now = Date.now();
-                        const isInGrace = isPro && !isBundled && plan.paidUntil !== null && new Date(plan.paidUntil).getTime() <= now;
+                        const isInGrace = isPro && plan.paidUntil !== null && new Date(plan.paidUntil).getTime() <= now;
                         const daysUntilBlocked = isInGrace
                           ? Math.max(0, Math.ceil((new Date(plan.graceEndsAt!).getTime() - now) / 86_400_000))
                           : 0;
                         const agentStoragePayFlow = payFlow?.context.kind === "storage-upgrade" && payFlow.context.mailboxActor === agentActor ? payFlow : null;
-                        const bundleTierDisplay = plan.bundleTier ? (BUNDLE_TIER_DISPLAY[plan.bundleTier] ?? plan.bundleTier) : null;
                         return (
                           <div className="flex items-center gap-2 flex-wrap text-xs">
                             <span className={isInGrace ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}>
-                              {isBundled
-                                ? `Pro storage ${storageStatus!.proQuotaBytes / 1024 ** 3}GB — included free (Sigil Storage ${bundleTierDisplay})`
-                                : isInGrace
+                              {isInGrace
                                 ? `Storage past due since ${new Date(plan.paidUntil!).toLocaleDateString()} — drops to ${storageStatus!.baseQuotaBytes / 1024 ** 3}GB in ${daysUntilBlocked} day${daysUntilBlocked === 1 ? "" : "s"}`
                                 : isPro
                                 ? `Pro storage ${storageStatus!.proQuotaBytes / 1024 ** 3}GB — renews ${new Date(plan.paidUntil!).toLocaleDateString()}`
                                 : `${storageStatus!.baseQuotaBytes / 1024 ** 3}GB base storage`}
                             </span>
-                            {!isBundled && (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleStartPurchase({ kind: "storage-upgrade", mailboxActor: agentActor })}
-                                  disabled={!!payFlow}
-                                  className="text-xs h-6"
-                                >
-                                  {isPro ? `Renew — $${storageStatus!.priceUsd}` : `Upgrade — $${storageStatus!.priceUsd}/mo`}
-                                </Button>
-                                {!isPro && <span className="text-[10px] text-muted-foreground">({storageStatus!.proQuotaBytes / 1024 ** 3}GB)</span>}
-                              </>
+                            {/* Overspend guard (task #148): hide once Pro and
+                                comfortably active — nothing due, backend
+                                would 400 this. */}
+                            {(!isPro || isInGrace || (plan.paidUntil && isEligibleForRenewal(plan.paidUntil))) && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleStartPurchase({ kind: "storage-upgrade", mailboxActor: agentActor })}
+                                disabled={!!payFlow}
+                                className="text-xs h-6"
+                              >
+                                {isPro ? `Renew — $${storageStatus!.priceUsd}` : `Upgrade — $${storageStatus!.priceUsd}/mo`}
+                              </Button>
                             )}
+                            {!isPro && <span className="text-[10px] text-muted-foreground">({storageStatus!.proQuotaBytes / 1024 ** 3}GB)</span>}
                             {agentStoragePayFlow && renderInvoiceCard()}
                           </div>
                         );
@@ -1645,7 +1811,13 @@ export default function GrantsPage() {
         {/* ── Incoming Offers ── */}
         {activeSection === "incoming" && (
           <div className="max-w-xl space-y-4">
-            <h1 className="text-lg font-semibold">Incoming Offers</h1>
+            <div>
+              <h1 className="text-lg font-semibold">Incoming Offers</h1>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                For agents that set up their own mailbox independently and are offering YOU access to it.
+                Different from Agent Wallets — that's for mailboxes you claimed and are paying for; those need no offer.
+              </p>
+            </div>
 
             {incoming.length === 0 && incomingPm.length === 0 && !loading && (
               <div className="rounded-lg border border-dashed border-border p-8 text-center text-muted-foreground text-sm">
@@ -1761,6 +1933,109 @@ export default function GrantsPage() {
                   ))}
                 </div>
               </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Activity ── */}
+        {activeSection === "activity" && (
+          <div className="max-w-xl space-y-6">
+            <div>
+              <h1 className="text-lg font-semibold">Activity</h1>
+              <p className="text-xs text-muted-foreground mt-1">What's actually happening with your mail — live, not a snapshot.</p>
+            </div>
+
+            {!activity && !loading && (
+              <div className="rounded-lg border border-dashed border-border p-8 text-center text-muted-foreground text-sm">
+                Couldn't load activity data — try Refresh above.
+              </div>
+            )}
+
+            {activity && (
+              <>
+                <div>
+                  <h2 className="text-sm font-medium text-muted-foreground mb-2">Deliverability</h2>
+                  {activity.deliverability ? (
+                    <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+                      {([
+                        ["SPF", activity.deliverability.spf],
+                        ["DKIM", activity.deliverability.dkim],
+                        ["DMARC", activity.deliverability.dmarc],
+                        ["MTA-STS", activity.deliverability.mtaSts],
+                      ] as const).map(([label, ok]) => (
+                        <div key={label} className="flex items-center justify-between text-sm">
+                          <span>{label}</span>
+                          <span className={cn("text-xs font-medium flex items-center gap-1", ok ? "text-emerald-500" : "text-destructive")}>
+                            {ok ? <Check className="w-3 h-3" /> : <X className="w-3 h-3" />}
+                            {ok ? "Passing" : "Failing"}
+                          </span>
+                        </div>
+                      ))}
+                      <p className="text-[11px] text-muted-foreground pt-1 border-t border-border">
+                        Checked {timeAgo(activity.deliverability.checkedAt)}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-border p-4 text-center text-muted-foreground text-xs">
+                      Deliverability check failed to run — try Refresh.
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <h2 className="text-sm font-medium text-muted-foreground mb-2">Recent mail — spam filter</h2>
+                  {activity.recentMail.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-border p-6 text-center text-muted-foreground text-xs">
+                      No recent mail to show
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {activity.recentMail.map((m, i) => {
+                        const flagged = m.spamStatus?.trim().toLowerCase() === "yes";
+                        return (
+                          <div key={i} className="rounded-lg border border-border bg-card p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <p className="text-sm font-medium truncate">{m.subject}</p>
+                              <span className={cn("text-[10px] font-medium shrink-0", flagged ? "text-destructive" : "text-muted-foreground")}>
+                                {m.spamScore ? m.spamScore.trim() : flagged ? "flagged" : "not scored"}
+                              </span>
+                            </div>
+                            <p className="text-xs text-muted-foreground">{timeAgo(m.receivedAt)}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <h2 className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+                    <Webhook className="w-3.5 h-3.5" /> Webhook deliveries
+                  </h2>
+                  {activity.webhooks.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-border p-6 text-center text-muted-foreground text-xs">
+                      No webhooks registered — add one in My Mailbox
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {activity.webhooks.map((w) => (
+                        <div key={w.id} className="rounded-lg border border-border bg-card p-3">
+                          <p className="text-sm font-medium truncate">{w.url}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {w.lastDeliveredAt
+                              ? <>Last delivered {timeAgo(w.lastDeliveredAt)} · {w.lastStatus ?? "unknown status"}</>
+                              : "No deliveries yet"}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-muted-foreground">
+                  Not shown: per-agent send-rate usage — Stalwart only exposes that through an Enterprise-licensed API this server doesn't have. Sending limits are enforced either way, just not visible here yet.
+                </p>
+              </>
             )}
           </div>
         )}

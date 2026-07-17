@@ -96,6 +96,10 @@ export default function FilesPage() {
   const isEmbedded = useIsEmbedded();
   const [folderLayout, setFolderLayout] = useState<FolderLayout>(() => loadFilesSettings().folderLayout);
   const hasFetched = useRef(false);
+  // Tracks which account the file-store's client was last initialized for
+  // (undefined = never). Distinct from hasFetched below, which is embedded/
+  // Pro-shell-only "do this once" state.
+  const initializedAccountIdRef = useRef<string | null | undefined>(undefined);
 
   // Sync folderLayout when settings change
   useEffect(() => {
@@ -140,15 +144,32 @@ export default function FilesPage() {
 
   // Initialize JMAP files client. In the Pro shell, all connected accounts
   // are surfaced as top-level folders at the root, so we *don't* auto-attach
-  // to the active account - the user picks one explicitly.
+  // to the active account - the user picks one explicitly (that reset to the
+  // picker only needs to happen once, hence hasFetched below).
+  //
+  // Non-embedded path: must re-init whenever the *active account* actually
+  // changes, not just once per mount — otherwise switching accounts via the
+  // switcher leaves the file-store's client and `resources` pointed at the
+  // PREVIOUS account, so its file listing (names only — real blob fetches
+  // still correctly re-auth against the new account and fail) stays visible
+  // after switching. Found 2026-07-14 (task #147): a human uploaded a file,
+  // switched accounts, and could still see its name in the listing (but was
+  // correctly blocked from previewing/downloading it — no actual data
+  // crossed accounts, this was a stale-listing bug, not a server-side leak).
+  // clearClient() first resets `supportsFiles` to null so the "load root"
+  // effect below actually refires for the new account instead of no-op'ing.
   useEffect(() => {
-    if (!isAuthenticated || !client || hasFetched.current) return;
-    hasFetched.current = true;
+    if (!isAuthenticated || !client) return;
     if (isEmbedded) {
+      if (hasFetched.current) return;
+      hasFetched.current = true;
       useFileStore.getState().clearClient();
-    } else {
-      initClient(client, activeAccountId);
+      return;
     }
+    if (initializedAccountIdRef.current === activeAccountId) return;
+    initializedAccountIdRef.current = activeAccountId;
+    useFileStore.getState().clearClient();
+    initClient(client, activeAccountId);
   }, [isAuthenticated, client, initClient, activeAccountId, isEmbedded]);
 
   // Intercept browser refresh gestures (F5, Ctrl/Cmd+R, pull-to-refresh)

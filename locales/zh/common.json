@@ -189,6 +189,7 @@
     "url_label": "URL",
     "url_required": "URL 为必填项",
     "url_invalid": "请输入有效的 http 或 https URL",
+    "url_own_domain": "You can't add this site's own URL as an app",
     "icon_label": "图标",
     "icon_required": "图标为必填项",
     "open_mode_label": "打开方式",

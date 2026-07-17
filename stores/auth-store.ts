@@ -501,6 +501,16 @@ export const useAuthStore = create<AuthState>()(
             hasError: false,
             isDefault: accountStore.accounts.length === 0,
           });
+          // The session/token cookie was written to `cookieSlot` above. Force
+          // the stored value to match: addAccount recomputes its own slot via
+          // getNextCookieSlot for new accounts, which can disagree with the
+          // slot computed at the top of this function if the account registry
+          // changed during the awaits in between (another tab, or a
+          // logout/add-account sequence in quick succession) — see the same
+          // fix in loginWithOAuth/loginWithServerSso above, which this basic-
+          // auth path was missing (task #149: caused one account's switcher
+          // entry to end up reading a DIFFERENT account's session cookie).
+          accountStore.updateAccount(accountId, { cookieSlot });
           accountStore.setActiveAccount(accountId);
 
           // Update account entry in case it already existed (addAccount is a no-op for existing accounts)
@@ -1299,7 +1309,7 @@ export const useAuthStore = create<AuthState>()(
                 const displayMailbox = fullUsername.includes('%')
                   ? fullUsername.split('%', 1)[0]
                   : fullUsername;
-                accountStore.addAccount({
+                const orphanAccountId = accountStore.addAccount({
                   label: displayMailbox,
                   serverUrl: data.serverUrl,
                   username: fullUsername,
@@ -1312,6 +1322,10 @@ export const useAuthStore = create<AuthState>()(
                   hasError: false,
                   isDefault: true,
                 });
+                // The PUT above read from slot 0 (no `?slot=` param) — pin
+                // explicitly rather than trust addAccount's own
+                // getNextCookieSlot() to agree (see the same fix in login()).
+                accountStore.updateAccount(orphanAccountId, { cookieSlot: 0 });
                 accounts = useAccountStore.getState().accounts;
               }
             }
@@ -1513,6 +1527,11 @@ export const useAuthStore = create<AuthState>()(
                   hasError: false,
                   isDefault: accountStore.accounts.length === 0,
                 });
+                // refreshAccessToken() above used slot 0 (no account yet
+                // registered, see its `account?.cookieSlot ?? 0` fallback) —
+                // pin explicitly rather than trust addAccount's own
+                // getNextCookieSlot() to agree (see the same fix in login()).
+                accountStore.updateAccount(accountId, { cookieSlot: 0 });
                 accountStore.setActiveAccount(accountId);
 
                 const { identities, primaryIdentity } = loadIdentities(await client.getIdentities(), state.username || '');
@@ -1579,6 +1598,11 @@ export const useAuthStore = create<AuthState>()(
                   hasError: false,
                   isDefault: accountStore.accounts.length === 0,
                 });
+                // The PUT above read from slot 0 (no `?slot=` param — see
+                // getSlot()'s default in app/api/auth/session/route.ts) —
+                // pin explicitly rather than trust addAccount's own
+                // getNextCookieSlot() to agree (see the same fix in login()).
+                accountStore.updateAccount(accountId, { cookieSlot: 0 });
                 accountStore.setActiveAccount(accountId);
 
                 const cookieSlot = accountStore.getAccountById(accountId)?.cookieSlot ?? 0;

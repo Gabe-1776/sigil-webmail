@@ -1,6 +1,27 @@
 import { create } from 'zustand';
 import type { IJMAPClient } from '@/lib/jmap/client-interface';
 import type { FileNode, FileNodeRights } from '@/lib/jmap/types';
+import { getAccountScopedKey } from '@/lib/account-utils';
+
+// favorites/recentFiles were flat, unscoped localStorage keys until
+// 2026-07-14 (task #147) — a human could switch accounts and still see a
+// previous account's recent/favorited file NAMES (not content: opening one
+// correctly re-authed against the new account and failed). Scoped per
+// account, same fix pattern as sigil_auth_token earlier the same session.
+function loadScopedList<T>(baseKey: string, accountId: string | null): T[] {
+  if (!accountId) return [];
+  try {
+    return JSON.parse(localStorage.getItem(getAccountScopedKey(baseKey, accountId)) || '[]');
+  } catch {
+    return [];
+  }
+}
+function saveScopedList<T>(baseKey: string, accountId: string | null, value: T[]): void {
+  if (!accountId) return;
+  try {
+    localStorage.setItem(getAccountScopedKey(baseKey, accountId), JSON.stringify(value));
+  } catch { /* ignore */ }
+}
 
 export interface FileResource {
   id: string;
@@ -240,16 +261,23 @@ export const useFileStore = create<FileState>((set, get) => ({
   uploadAbortController: null,
   lastAction: null,
   sharedRoots: [],
-  favorites: (() => {
-    try { return JSON.parse(localStorage.getItem('files-favorites') || '[]'); } catch { return []; }
-  })(),
-  recentFiles: (() => {
-    try { return JSON.parse(localStorage.getItem('files-recent-files') || '[]'); } catch { return []; }
-  })(),
+  favorites: [],
+  recentFiles: [],
 
   initClient: (client: IJMAPClient, accountId?: string | null) => {
     const patch: Partial<FileState> = { client };
-    if (accountId !== undefined) patch.currentAccountId = accountId;
+    if (accountId !== undefined) {
+      patch.currentAccountId = accountId;
+      patch.favorites = loadScopedList('files-favorites', accountId ?? null);
+      patch.recentFiles = loadScopedList('files-recent-files', accountId ?? null);
+      // Drop the pre-scoping flat keys outright: their contents co-mingled
+      // every account that ever used this browser profile, so there's no
+      // safe account to migrate them to.
+      try {
+        localStorage.removeItem('files-favorites');
+        localStorage.removeItem('files-recent-files');
+      } catch { /* ignore */ }
+    }
     set(patch);
   },
 
@@ -258,6 +286,8 @@ export const useFileStore = create<FileState>((set, get) => ({
       client: null,
       currentAccountId: null,
       supportsFiles: null,
+      favorites: [],
+      recentFiles: [],
       pathStack: [{ id: null, name: '' }],
       currentPath: '/',
       currentParentId: null,
@@ -516,11 +546,11 @@ export const useFileStore = create<FileState>((set, get) => ({
       const resources = sortResources(childrenOf(allNodes, parentId).map(nodeToResource));
 
       // Prune recent files whose backing node no longer exists on the server
-      const { recentFiles } = get();
+      const { recentFiles, currentAccountId } = get();
       const existingIds = new Set(allNodes.map(n => n.id));
       const prunedRecent = recentFiles.filter(r => existingIds.has(r.id));
       if (prunedRecent.length !== recentFiles.length) {
-        try { localStorage.setItem('files-recent-files', JSON.stringify(prunedRecent)); } catch { /* ignore */ }
+        saveScopedList('files-recent-files', currentAccountId, prunedRecent);
         set({ resources, recentFiles: prunedRecent, isLoading: false });
       } else {
         set({ resources, isLoading: false });
@@ -724,7 +754,7 @@ export const useFileStore = create<FileState>((set, get) => ({
   },
 
   deleteResource: async (name: string) => {
-    const { client, resources, recentFiles, refresh } = get();
+    const { client, resources, recentFiles, currentAccountId, refresh } = get();
     if (!client) return;
 
     const resource = resources.find(r => r.name === name);
@@ -734,12 +764,12 @@ export const useFileStore = create<FileState>((set, get) => ({
     await client.destroyFileNodes([resource.id]);
     const nextRecentFiles = recentFiles.filter(r => r.id !== resource.id);
     set({ recentFiles: nextRecentFiles });
-    try { localStorage.setItem('files-recent-files', JSON.stringify(nextRecentFiles)); } catch { /* ignore */ }
+    saveScopedList('files-recent-files', currentAccountId, nextRecentFiles);
     await refresh();
   },
 
   deleteResources: async (names: string[]) => {
-    const { client, resources, recentFiles, refresh } = get();
+    const { client, resources, recentFiles, currentAccountId, refresh } = get();
     if (!client) return;
 
     const idsToDelete: string[] = [];
@@ -756,7 +786,7 @@ export const useFileStore = create<FileState>((set, get) => ({
     const nextRecentFiles = recentFiles.filter(r => !deletedIdSet.has(r.id));
     set({ selectedResources: new Set() });
     set({ recentFiles: nextRecentFiles });
-    try { localStorage.setItem('files-recent-files', JSON.stringify(nextRecentFiles)); } catch { /* ignore */ }
+    saveScopedList('files-recent-files', currentAccountId, nextRecentFiles);
     await refresh();
   },
 
@@ -986,21 +1016,21 @@ export const useFileStore = create<FileState>((set, get) => ({
   },
 
   toggleFavorite: (path: string) => {
-    const { favorites } = get();
+    const { favorites, currentAccountId } = get();
     const next = favorites.includes(path)
       ? favorites.filter(f => f !== path)
       : [...favorites, path];
     set({ favorites: next });
-    try { localStorage.setItem('files-favorites', JSON.stringify(next)); } catch { /* ignore */ }
+    saveScopedList('files-favorites', currentAccountId, next);
   },
 
   addRecentFile: (name: string, id: string) => {
-    const { recentFiles } = get();
+    const { recentFiles, currentAccountId } = get();
     const entry = { name, id, timestamp: Date.now() };
     const filtered = recentFiles.filter(r => r.id !== id);
     const next = [entry, ...filtered].slice(0, 20);
     set({ recentFiles: next });
-    try { localStorage.setItem('files-recent-files', JSON.stringify(next)); } catch { /* ignore */ }
+    saveScopedList('files-recent-files', currentAccountId, next);
   },
 
   undoLastAction: async () => {

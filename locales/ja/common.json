@@ -189,6 +189,7 @@
     "url_label": "URL",
     "url_required": "URLは必須です",
     "url_invalid": "有効なhttpまたはhttps URLを入力してください",
+    "url_own_domain": "You can't add this site's own URL as an app",
     "icon_label": "アイコン",
     "icon_required": "アイコンは必須です",
     "open_mode_label": "開き方",

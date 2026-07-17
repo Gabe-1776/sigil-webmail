@@ -54,6 +54,15 @@ function AppForm({
         const parsed = new URL(formData.url);
         if (!["http:", "https:"].includes(parsed.protocol)) {
           newErrors.url = t("url_invalid");
+        } else if (
+          typeof window !== "undefined" &&
+          parsed.hostname.toLowerCase() === window.location.hostname.toLowerCase()
+        ) {
+          // Security (inline-app-view.tsx has the matching iframe-sandbox
+          // fix): an "app" pointed at this site's own domain can't be
+          // safely embedded, sandboxed or not — the whole point of adding
+          // one is to open someone else's page inside ours.
+          newErrors.url = t("url_own_domain");
         }
       } catch {
         newErrors.url = t("url_invalid");

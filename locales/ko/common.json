@@ -189,6 +189,7 @@
     "url_label": "URL",
     "url_required": "URL을 입력해 주세요",
     "url_invalid": "올바른 http 또는 https URL을 입력해 주세요",
+    "url_own_domain": "You can't add this site's own URL as an app",
     "icon_label": "아이콘",
     "icon_required": "아이콘을 선택해 주세요",
     "open_mode_label": "열기 모드",

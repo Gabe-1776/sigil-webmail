@@ -189,6 +189,7 @@
     "url_label": "URL",
     "url_required": "URL je vyžadováno",
     "url_invalid": "Zadejte platnou adresu http nebo https",
+    "url_own_domain": "You can't add this site's own URL as an app",
     "icon_label": "Ikona",
     "icon_required": "Ikona je vyžadována",
     "open_mode_label": "Režim otevírání",

@@ -204,7 +204,7 @@ export default function SetupWizardPage() {
       <CenteredCard>
         <h1 className="text-lg font-semibold">Configuration is read-only</h1>
         <p className="text-sm text-muted-foreground mt-2">
-          The config volume is mounted read-only or <code className="font-mono text-xs">ADMIN_CONFIG_READONLY</code> is set.
+          The config volume is mounted read-only or <code className="font-mono text-xs">ADMIN_CONFIG_READONLY</code>{" "}is set.
           Remount it read-write or unset that variable, then restart the container.
         </p>
       </CenteredCard>
@@ -737,7 +737,7 @@ function ServerStep({ config, setConfig, onNext }: Pick<StepProps, 'config' | 's
                 This URL uses plain HTTP.
               </p>
               <p className="text-sm text-muted-foreground mt-0.5 leading-relaxed">
-                Passwords and email contents will travel unencrypted between users and your server. Use <code className="font-mono text-xs">https://</code> in production - terminate TLS on the mail server or a reverse proxy in front of it.
+                Passwords and email contents will travel unencrypted between users and your server. Use <code className="font-mono text-xs">https://</code>{" "}in production - terminate TLS on the mail server or a reverse proxy in front of it.
               </p>
             </div>
           </div>

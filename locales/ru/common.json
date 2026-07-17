@@ -189,6 +189,7 @@
     "url_label": "URL-адрес",
     "url_required": "URL обязателен",
     "url_invalid": "Введите корректный URL http или https",
+    "url_own_domain": "You can't add this site's own URL as an app",
     "icon_label": "Иконка",
     "icon_required": "Иконка обязательна",
     "open_mode_label": "Режим открытия",

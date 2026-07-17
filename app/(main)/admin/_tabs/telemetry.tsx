@@ -105,7 +105,7 @@ export function TelemetryTab() {
   if (loading || !status) {
     return (
       <div className="p-8 flex items-center gap-2 text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" /> loading…
+        <Loader2 className="h-4 w-4 animate-spin" />{" "}loading…
       </div>
     );
   }
@@ -142,7 +142,7 @@ export function TelemetryTab() {
               {status.consent === 'on' && 'Heartbeats are enabled. Thanks for helping us improve!'}
               {status.consent === 'off' && 'Heartbeats are off (default).'}
               {envOverridden && (
-                <> Locked by <code>BULWARK_TELEMETRY</code> env var.</>
+                <> Locked by <code>BULWARK_TELEMETRY</code>{" "}env var.</>
               )}
             </div>
           </div>

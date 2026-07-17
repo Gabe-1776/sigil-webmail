@@ -21,12 +21,64 @@ function isSetupPath(pathname: string): boolean {
   );
 }
 
+const MAINTENANCE_BYPASS_COOKIE = "maintenance_bypass";
+
 export async function proxy(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  // Set (not returned-with-early-exit) further down, once the real page
+  // response exists — see the note at the maintenance-mode block below for
+  // why this can't just return NextResponse.next() immediately.
+  let pendingBypassCookieValue: string | null = null;
+
+  // Maintenance mode: MAINTENANCE_MODE=true blocks the whole webmail app
+  // for the public while fixes are in progress. Only gates THIS Next.js
+  // app (webmail.mailsigil.pro) — JMAP/IMAP/SMTP (Stalwart, a separate
+  // container) and the auth service (a separate systemd service, separate
+  // domain) are untouched, so mail delivery and any agent pipeline keep
+  // working the whole time this is on. Takes precedence over everything
+  // else (setup wizard included) — deliberately checked before any other
+  // routing decision.
+  if (process.env.MAINTENANCE_MODE === "true") {
+    const bypassToken = process.env.MAINTENANCE_BYPASS_TOKEN;
+    const hasValidCookie = bypassToken && request.cookies.get(MAINTENANCE_BYPASS_COOKIE)?.value === bypassToken;
+    const queryToken = request.nextUrl.searchParams.get("maintenance_bypass");
+    const hasValidQueryToken = bypassToken && queryToken === bypassToken;
+    const bypassed = hasValidCookie || hasValidQueryToken;
+
+    if (!bypassed && pathname !== "/api/health") {
+      if (pathname.startsWith("/api/")) {
+        return new NextResponse(
+          JSON.stringify({ error: "maintenance", message: "Down for maintenance — back shortly." }),
+          { status: 503, headers: { "content-type": "application/json", "Retry-After": "1800" } },
+        );
+      }
+      return new NextResponse(
+        `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
+        `<title>Down for maintenance</title><style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;` +
+        `justify-content:center;min-height:100vh;margin:0;background:#0D1B5E;color:#fff;text-align:center;padding:24px}` +
+        `div{max-width:420px}h1{font-size:1.4rem;margin-bottom:.5rem}p{opacity:.8;line-height:1.5}</style></head>` +
+        `<body><div><h1>Down for maintenance</h1><p>Sigil Mail's webmail is temporarily offline while we ship a fix. ` +
+        `Mail is still being delivered normally — nothing is lost. Back shortly.</p></div></body></html>`,
+        { status: 503, headers: { "content-type": "text/html; charset=utf-8", "Retry-After": "1800" } },
+      );
+    }
+
+    if (hasValidQueryToken && !hasValidCookie) {
+      // Promote a valid one-time query token to a cookie so the rest of the
+      // visit (and future visits) don't need the token in every URL. Don't
+      // return here — an early NextResponse.next() skips the intl
+      // middleware's locale-prefix rewrite below (e.g. "/" -> "/en"),
+      // which 404s since nothing else resolves the bare route. Set the
+      // cookie later on the SAME response the rest of this function
+      // produces, once the normal pipeline has actually run.
+      pendingBypassCookieValue = bypassToken!;
+    }
+  }
+
   // Resolve setup state before deciding what to skip. The first call after
   // boot triggers the config load; subsequent calls are in-memory.
   await configManager.ensureLoaded();
   const setupState = detectSetupState();
-  const pathname = request.nextUrl.pathname;
 
   if (setupState === "bootstrap") {
     // Wizard active. Redirect HTML pages to /setup; let asset/internal
@@ -183,6 +235,16 @@ export async function proxy(request: NextRequest) {
     'camera=(), microphone=(), geolocation=(), payment=(), publickey-credentials-get=(self "https://webauth.com"), publickey-credentials-create=(self "https://webauth.com")'
   );
   response.headers.set("Content-Security-Policy", csp);
+
+  if (pendingBypassCookieValue) {
+    response.cookies.set(MAINTENANCE_BYPASS_COOKIE, pendingBypassCookieValue, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      maxAge: 60 * 60 * 24 * 30,
+      path: "/",
+    });
+  }
 
   return response;
 }

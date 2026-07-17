@@ -189,6 +189,7 @@
     "url_label": "URL",
     "url_required": "URL megadása kötelező",
     "url_invalid": "Érvényes http vagy https URL-t adj meg",
+    "url_own_domain": "You can't add this site's own URL as an app",
     "icon_label": "Ikon",
     "icon_required": "Ikon megadása kötelező",
     "open_mode_label": "Megnyitás módja",
