@@ -7,6 +7,7 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 
 import { useAuthStore } from "@/stores/auth-store";
+import { useWalletSessionStore } from "@/stores/wallet-session-store";
 import { generateAccountId, getAccountScopedKey } from "@/lib/account-utils";
 import { useAccountStore } from "@/stores/account-store";
 import { useThemeStore } from "@/stores/theme-store";
@@ -641,6 +642,16 @@ export default function LoginPage() {
       if (!verifyRes.ok) {
         throw new Error(verifyRes.error || "Wallet signature verification failed");
       }
+
+      // Cache this already-connected, already-proven-live session so the
+      // FIRST crypto payment of the visit (grants-content.tsx) can skip
+      // the connect handshake too, not just the second one onward — login
+      // just established and verified this exact session, no reason to
+      // throw it away and reconnect from scratch minutes later. See
+      // wallet-session-store.ts for why this is safe (in-memory only,
+      // never localStorage — doesn't touch the mechanism that caused the
+      // 2026-07-10 stale-session hang).
+      useWalletSessionStore.getState().setSession(session);
 
       // Upload the wallet's serialized channel session (fire-and-forget).
       // This is what lets the backend send NATIVE WebAuth signing prompts
