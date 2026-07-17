@@ -61,29 +61,6 @@ type WebhookSub = {
   lastStatus: string | null;
 };
 
-// Activity tab — real, live data only (see server.ts's /api/activity doc
-// comment for why per-sender rate-limit usage isn't included: Stalwart
-// only exposes that via an Enterprise-licensed metrics API this
-// deployment doesn't have).
-type RecentMailActivity = {
-  subject: string;
-  receivedAt: string;
-  spamScore: string | null;
-  spamStatus: string | null;
-};
-type DeliverabilityStatus = {
-  spf: boolean;
-  dkim: boolean;
-  dmarc: boolean;
-  mtaSts: boolean;
-  checkedAt: string;
-} | null;
-type ActivityData = {
-  recentMail: RecentMailActivity[];
-  webhooks: { id: string; url: string; lastDeliveredAt: string | null; lastStatus: string | null }[];
-  deliverability: DeliverabilityStatus;
-};
-
 type Quota = {
   owner: string;
   agentMailboxes: { used: number; limit: number; max: number; purchasedSlots: number };
@@ -170,7 +147,7 @@ type PayFlow = {
   pushStatus: "idle" | "trying" | "sent" | "failed";
 };
 
-type Section = "inbox" | "grants" | "incoming" | "issued" | "activity";
+type Section = "inbox" | "grants" | "incoming" | "issued";
 
 // Overspend guard (task #148) — UX consistency only, the backend is the
 // real boundary (auth/src/grant-store.ts's isEligibleForRenewal /
@@ -250,7 +227,6 @@ export default function GrantsContent() {
   const [webhookError, setWebhookError] = useState("");
   const [newWebhookSecret, setNewWebhookSecret] = useState<{ id: string; secret: string } | null>(null);
   const [deletingWebhookId, setDeletingWebhookId] = useState<string | null>(null);
-  const [activity, setActivity] = useState<ActivityData | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -286,7 +262,7 @@ export default function GrantsContent() {
     if (!token) return;
     if (!background) setLoading(true);
     try {
-      const [linkedRes, incomingRes, issuedRes, acceptedRes, incomingPmRes, sentPmRes, quotaRes, leaseInfoRes, storageStatusRes, webhooksRes, activityRes] = await Promise.all([
+      const [linkedRes, incomingRes, issuedRes, acceptedRes, incomingPmRes, sentPmRes, quotaRes, leaseInfoRes, storageStatusRes, webhooksRes] = await Promise.all([
         authFetch("/api/agentcore/linked"),
         authFetch("/api/grants/incoming"),
         authFetch("/api/grants/issued"),
@@ -297,14 +273,12 @@ export default function GrantsContent() {
         authFetch("/api/slots/leases").catch(() => null),
         authFetch("/api/storage/status").catch(() => null),
         authFetch("/api/webhooks").catch(() => null),
-        authFetch("/api/activity").catch(() => null),
       ]);
       if (linkedRes.ownedAgents) setLinked(linkedRes);
       if (quotaRes?.ok) setQuota(quotaRes);
       if (leaseInfoRes?.ok) setLeaseInfo(leaseInfoRes);
       if (storageStatusRes?.ok) setStorageStatus(storageStatusRes);
       if (webhooksRes?.ok) setWebhooks(webhooksRes.webhooks ?? []);
-      if (activityRes?.ok) setActivity({ recentMail: activityRes.recentMail ?? [], webhooks: activityRes.webhooks ?? [], deliverability: activityRes.deliverability ?? null });
       setIncoming(incomingRes.grants ?? []);
       setIssued(issuedRes.grants ?? []);
       setAccepted(acceptedRes.grants ?? []);
@@ -989,7 +963,6 @@ export default function GrantsContent() {
     { id: "grants", label: "Agent Wallets", badge: (linked?.ownedAgents.length ?? 0) + (linked?.ownedBy ? 1 : 0) || undefined },
     { id: "incoming", label: "Incoming Offers", badge: incomingCount > 0 ? incomingCount : undefined },
     { id: "issued", label: "Issued Grants" },
-    { id: "activity", label: "Activity" },
   ];
 
   return (
@@ -1937,108 +1910,6 @@ export default function GrantsContent() {
           </div>
         )}
 
-        {/* ── Activity ── */}
-        {activeSection === "activity" && (
-          <div className="max-w-xl space-y-6">
-            <div>
-              <h1 className="text-lg font-semibold">Activity</h1>
-              <p className="text-xs text-muted-foreground mt-1">What's actually happening with your mail — live, not a snapshot.</p>
-            </div>
-
-            {!activity && !loading && (
-              <div className="rounded-lg border border-dashed border-border p-8 text-center text-muted-foreground text-sm">
-                Couldn't load activity data — try Refresh above.
-              </div>
-            )}
-
-            {activity && (
-              <>
-                <div>
-                  <h2 className="text-sm font-medium text-muted-foreground mb-2">Deliverability</h2>
-                  {activity.deliverability ? (
-                    <div className="rounded-lg border border-border bg-card p-4 space-y-2">
-                      {([
-                        ["SPF", activity.deliverability.spf],
-                        ["DKIM", activity.deliverability.dkim],
-                        ["DMARC", activity.deliverability.dmarc],
-                        ["MTA-STS", activity.deliverability.mtaSts],
-                      ] as const).map(([label, ok]) => (
-                        <div key={label} className="flex items-center justify-between text-sm">
-                          <span>{label}</span>
-                          <span className={cn("text-xs font-medium flex items-center gap-1", ok ? "text-emerald-500" : "text-destructive")}>
-                            {ok ? <Check className="w-3 h-3" /> : <X className="w-3 h-3" />}
-                            {ok ? "Passing" : "Failing"}
-                          </span>
-                        </div>
-                      ))}
-                      <p className="text-[11px] text-muted-foreground pt-1 border-t border-border">
-                        Checked {timeAgo(activity.deliverability.checkedAt)}
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="rounded-lg border border-dashed border-border p-4 text-center text-muted-foreground text-xs">
-                      Deliverability check failed to run — try Refresh.
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <h2 className="text-sm font-medium text-muted-foreground mb-2">Recent mail — spam filter</h2>
-                  {activity.recentMail.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-border p-6 text-center text-muted-foreground text-xs">
-                      No recent mail to show
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {activity.recentMail.map((m, i) => {
-                        const flagged = m.spamStatus?.trim().toLowerCase() === "yes";
-                        return (
-                          <div key={i} className="rounded-lg border border-border bg-card p-3">
-                            <div className="flex items-start justify-between gap-3">
-                              <p className="text-sm font-medium truncate">{m.subject}</p>
-                              <span className={cn("text-[10px] font-medium shrink-0", flagged ? "text-destructive" : "text-muted-foreground")}>
-                                {m.spamScore ? m.spamScore.trim() : flagged ? "flagged" : "not scored"}
-                              </span>
-                            </div>
-                            <p className="text-xs text-muted-foreground">{timeAgo(m.receivedAt)}</p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <h2 className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
-                    <Webhook className="w-3.5 h-3.5" /> Webhook deliveries
-                  </h2>
-                  {activity.webhooks.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-border p-6 text-center text-muted-foreground text-xs">
-                      No webhooks registered — add one in My Mailbox
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {activity.webhooks.map((w) => (
-                        <div key={w.id} className="rounded-lg border border-border bg-card p-3">
-                          <p className="text-sm font-medium truncate">{w.url}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {w.lastDeliveredAt
-                              ? <>Last delivered {timeAgo(w.lastDeliveredAt)} · {w.lastStatus ?? "unknown status"}</>
-                              : "No deliveries yet"}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <p className="text-[11px] text-muted-foreground">
-                  Not shown: per-agent send-rate usage — Stalwart only exposes that through an Enterprise-licensed API this server doesn't have. Sending limits are enforced either way, just not visible here yet.
-                </p>
-              </>
-            )}
-          </div>
-        )}
       </main>
     </div>
   );
