@@ -7,7 +7,7 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 
 import { useAuthStore } from "@/stores/auth-store";
-import { useWalletSessionStore } from "@/stores/wallet-session-store";
+import { useWalletSessionStore, WALLET_SESSION_STORE_INSTANCE_ID } from "@/stores/wallet-session-store";
 import { generateAccountId, getAccountScopedKey } from "@/lib/account-utils";
 import { useAccountStore } from "@/stores/account-store";
 import { useThemeStore } from "@/stores/theme-store";
@@ -651,8 +651,12 @@ export default function LoginPage() {
       // wallet-session-store.ts for why this is safe (in-memory only,
       // never localStorage — doesn't touch the mechanism that caused the
       // 2026-07-10 stale-session hang).
-      console.log("[wallet-session] login: caching session for actor", session?.auth?.actor?.toString());
+      console.log("[wallet-session] login: caching session for actor", session?.auth?.actor?.toString(), "storeInstance=", WALLET_SESSION_STORE_INSTANCE_ID);
       useWalletSessionStore.getState().setSession(session);
+      // TEMP DEBUG: recorded so the payment screen can show it next to its
+      // OWN instance id — if they differ, the store module got bundled
+      // twice (separate singletons). Remove once resolved.
+      try { localStorage.setItem("wallet_session_debug_login_instance", WALLET_SESSION_STORE_INSTANCE_ID); } catch { /* noop */ }
 
       // Upload the wallet's serialized channel session (fire-and-forget).
       // This is what lets the backend send NATIVE WebAuth signing prompts

@@ -27,6 +27,14 @@ type WalletSessionState = {
   clearSession: () => void;
 };
 
+// TEMP DEBUG: a random id stamped once when this module first loads. If
+// login/page.tsx and grants-content.tsx ever log DIFFERENT values for
+// this, it proves Next.js bundled this module twice (two separate
+// singletons that don't actually share state) rather than a logic bug in
+// how the cache is read/written. Remove once the still-2-signs report is
+// resolved.
+export const WALLET_SESSION_STORE_INSTANCE_ID = Math.random().toString(36).slice(2, 8);
+
 export const useWalletSessionStore = create<WalletSessionState>((set) => ({
   session: null,
   setSession: (session) => set({ session }),

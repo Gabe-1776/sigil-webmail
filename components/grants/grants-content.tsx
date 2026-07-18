@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useAuthStore } from "@/stores/auth-store";
 import { useAccountStore } from "@/stores/account-store";
-import { useWalletSessionStore } from "@/stores/wallet-session-store";
+import { useWalletSessionStore, WALLET_SESSION_STORE_INSTANCE_ID } from "@/stores/wallet-session-store";
 import { generateAccountId, getAccountScopedKey } from "@/lib/account-utils";
 import { useConfig } from "@/hooks/use-config";
 import { ShieldCheck, Mail, Loader2, RefreshCw, Check, X, AlertCircle, Webhook } from "lucide-react";
@@ -572,9 +572,12 @@ export default function GrantsContent() {
     setPayFlow((pf) => (pf ? { ...pf, phase: "waiting", error: "" } : pf));
     setSigning(true);
     const cachedAtStart: any = useWalletSessionStore.getState().session;
+    let loginInstance = "n/a";
+    try { loginInstance = localStorage.getItem("wallet_session_debug_login_instance") ?? "none-recorded"; } catch { /* noop */ }
     setSigningDebug(
       `debug: cache ${cachedAtStart ? "present" : "EMPTY"}` +
-      (cachedAtStart ? `, cachedActor="${cachedAtStart.auth?.actor?.toString()}" vs currentActor="${actor}"` : "")
+      (cachedAtStart ? `, cachedActor="${cachedAtStart.auth?.actor?.toString()}" vs currentActor="${actor}"` : "") +
+      ` | storeInstance(here)=${WALLET_SESSION_STORE_INSTANCE_ID} storeInstance(atLogin)=${loginInstance}`
     );
     const action = {
       account: opt.contract,
