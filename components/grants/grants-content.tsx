@@ -142,6 +142,11 @@ type PayFlow = {
   error: string;
   payToken: string;
   showManual: boolean;
+  // Set once the wallet has actually signed+broadcast the transfer — the
+  // "waiting" phase covers both "hasn't paid yet" and "just paid, backend
+  // hasn't credited it yet" and those need different copy (an expiry
+  // countdown makes no sense once you've already sent the money).
+  justSigned: boolean;
 };
 
 type Section = "inbox" | "grants" | "incoming" | "issued";
@@ -597,7 +602,10 @@ export default function GrantsContent() {
         const { session: fresh } = await getWalletSession(true);
         await transactWithTimeout(fresh, { actions: [action] }, { broadcast: true });
       }
-      // Polling effect below picks up the paid status once it confirms on-chain.
+      // Signed + broadcast successfully — the wallet already confirmed this
+      // on-chain. What's left is our OWN backend noticing and crediting it
+      // (the polling effect below), not waiting on the payment itself.
+      setPayFlow((pf) => (pf ? { ...pf, justSigned: true } : pf));
     } catch (err: any) {
       setPayFlow((pf) => (pf ? { ...pf, phase: "waiting", error: err?.message ?? String(err) } : pf));
     } finally {
@@ -613,7 +621,7 @@ export default function GrantsContent() {
   // app if you'd rather (redundant-paths rule) — see
   // BLUEPRINT-slot-renewals.md.
   const handleStartPurchase = async (context: PayContext) => {
-    setPayFlow({ context, phase: "creating", invoice: null, error: "", payToken: "XMD", showManual: false });
+    setPayFlow({ context, phase: "creating", invoice: null, error: "", payToken: "XMD", showManual: false, justSigned: false });
     try {
       // Same invoice card, different endpoint: storage-upgrade invoices
       // hit /api/storage/upgrade instead of /api/quota/invoice, but the
@@ -626,9 +634,9 @@ export default function GrantsContent() {
         : ["/api/quota/invoice", {}];
       const res = await authFetch(endpoint as string, { method: "POST", body: JSON.stringify(body) });
       if (!res.ok) throw new Error(res.error || "could not create invoice");
-      setPayFlow({ context, phase: "waiting", invoice: res, error: "", payToken: "XMD", showManual: false });
+      setPayFlow({ context, phase: "waiting", invoice: res, error: "", payToken: "XMD", showManual: false, justSigned: false });
     } catch (err: any) {
-      setPayFlow({ context, phase: "error", invoice: null, error: err?.message ?? String(err), payToken: "XMD", showManual: false });
+      setPayFlow({ context, phase: "error", invoice: null, error: err?.message ?? String(err), payToken: "XMD", showManual: false, justSigned: false });
     }
   };
 
@@ -815,7 +823,10 @@ export default function GrantsContent() {
           {signingDebug && <p className="text-[10px] font-mono text-muted-foreground break-all">{signingDebug}</p>}
           {error && <p className="text-xs text-destructive">{error}</p>}
           <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-            <Loader2 className="w-3 h-3 animate-spin" /> Waiting for payment… (expires {new Date(invoice.expiresAt).toLocaleTimeString()})
+            <Loader2 className="w-3 h-3 animate-spin" />
+            {payFlow?.justSigned
+              ? "Payment sent — confirming…"
+              : <>Waiting for payment… (expires {new Date(invoice.expiresAt).toLocaleTimeString()})</>}
           </p>
           <button
             onClick={() => setPayFlow((pf) => (pf ? { ...pf, showManual: !pf.showManual } : pf))}
