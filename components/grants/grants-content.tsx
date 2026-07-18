@@ -215,6 +215,11 @@ export default function GrantsContent() {
   // per-agent state machines here.
   const [payFlow, setPayFlow] = useState<PayFlow | null>(null);
   const [signing, setSigning] = useState(false);
+  // TEMP DEBUG (remove once the reused-session report is resolved): shows
+  // directly on the Pay button whether a cached session was actually
+  // reused, since getting console output from a live test has been slow
+  // going back and forth.
+  const [signingDebug, setSigningDebug] = useState<string | null>(null);
   const [releaseFlow, setReleaseFlow] = useState<{ leaseId: string; phase: "confirm" | "releasing" | "error"; error: string } | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [removingAgent, setRemovingAgent] = useState<string | null>(null);
@@ -566,6 +571,11 @@ export default function GrantsContent() {
     if (!opt || !actor) return;
     setPayFlow((pf) => (pf ? { ...pf, phase: "waiting", error: "" } : pf));
     setSigning(true);
+    const cachedAtStart: any = useWalletSessionStore.getState().session;
+    setSigningDebug(
+      `debug: cache ${cachedAtStart ? "present" : "EMPTY"}` +
+      (cachedAtStart ? `, cachedActor="${cachedAtStart.auth?.actor?.toString()}" vs currentActor="${actor}"` : "")
+    );
     const action = {
       account: opt.contract,
       name: "transfer",
@@ -574,10 +584,12 @@ export default function GrantsContent() {
     };
     try {
       const { session, reused } = await getWalletSession();
+      setSigningDebug((d) => `${d} → ${reused ? "REUSING cached session (should be 1 sign)" : "fresh connect (2 signs expected)"}`);
       try {
         await transactWithTimeout(session, { actions: [action] }, { broadcast: true });
       } catch (err: any) {
         if (!reused) throw err; // already a fresh session — this is a real failure
+        setSigningDebug((d) => `${d} → reused session's transact FAILED (${err?.message ?? err}), falling back to fresh connect`);
         useWalletSessionStore.getState().clearSession();
         const { session: fresh } = await getWalletSession(true);
         await transactWithTimeout(fresh, { actions: [action] }, { broadcast: true });
@@ -797,6 +809,7 @@ export default function GrantsContent() {
           >
             {signing ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Opening wallet…</>) : "Pay"}
           </Button>
+          {signingDebug && <p className="text-[10px] font-mono text-muted-foreground break-all">{signingDebug}</p>}
           {error && <p className="text-xs text-destructive">{error}</p>}
           <p className="text-xs text-muted-foreground flex items-center gap-1.5">
             <Loader2 className="w-3 h-3 animate-spin" /> Waiting for payment… (expires {new Date(invoice.expiresAt).toLocaleTimeString()})
