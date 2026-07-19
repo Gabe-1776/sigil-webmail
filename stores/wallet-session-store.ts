@@ -54,9 +54,7 @@ function createWalletSessionStore() {
 // purchase actually goes down to one signature; remove the debug scaffolding
 // (this id, the visible debug line in grants-content.tsx) once resolved.
 declare global {
-  // eslint-disable-next-line no-var
   var __sigilWalletSessionStore: ReturnType<typeof createWalletSessionStore> | undefined;
-  // eslint-disable-next-line no-var
   var __sigilWalletSessionStoreInstanceId: string | undefined;
 }
 
