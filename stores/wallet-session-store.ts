@@ -27,16 +27,42 @@ type WalletSessionState = {
   clearSession: () => void;
 };
 
-// TEMP DEBUG: a random id stamped once when this module first loads. If
-// login/page.tsx and grants-content.tsx ever log DIFFERENT values for
-// this, it proves Next.js bundled this module twice (two separate
-// singletons that don't actually share state) rather than a logic bug in
-// how the cache is read/written. Remove once the still-2-signs report is
-// resolved.
-export const WALLET_SESSION_STORE_INSTANCE_ID = Math.random().toString(36).slice(2, 8);
+function createWalletSessionStore() {
+  return create<WalletSessionState>((set) => ({
+    session: null,
+    setSession: (session) => set({ session }),
+    clearSession: () => set({ session: null }),
+  }));
+}
 
-export const useWalletSessionStore = create<WalletSessionState>((set) => ({
-  session: null,
-  setSession: (session) => set({ session }),
-  clearSession: () => set({ session: null }),
-}));
+// CONFIRMED LIVE 2026-07-18: login/page.tsx and grants-content.tsx logged
+// DIFFERENT instance ids (e.g. "upryq3" vs "tbur97") with the cache reading
+// EMPTY at payment time, right after a fresh wallet login. Next.js (this app
+// runs on Turbopack) evaluated this module more than once per tab — once for
+// whatever chunk contains the login route, again for whatever chunk contains
+// the grants drawer — and a plain module-scope `create(...)` gives each
+// evaluation its own closure-scoped store that doesn't share state with the
+// other. A bare module-level singleton doesn't survive that.
+//
+// Fix: anchor both the store and its debug instance id on `globalThis`.
+// globalThis is one shared object across every chunk in the same JS realm
+// (tab) no matter how many times the module itself re-runs, so the first
+// evaluation wins and every later evaluation just reuses it — same pattern
+// Next.js recommends for a Prisma Client singleton surviving HMR.
+//
+// Keep the instance-id comparison on screen until Gabriel confirms a repeat
+// purchase actually goes down to one signature; remove the debug scaffolding
+// (this id, the visible debug line in grants-content.tsx) once resolved.
+declare global {
+  // eslint-disable-next-line no-var
+  var __sigilWalletSessionStore: ReturnType<typeof createWalletSessionStore> | undefined;
+  // eslint-disable-next-line no-var
+  var __sigilWalletSessionStoreInstanceId: string | undefined;
+}
+
+export const useWalletSessionStore =
+  globalThis.__sigilWalletSessionStore ?? (globalThis.__sigilWalletSessionStore = createWalletSessionStore());
+
+export const WALLET_SESSION_STORE_INSTANCE_ID =
+  globalThis.__sigilWalletSessionStoreInstanceId ??
+  (globalThis.__sigilWalletSessionStoreInstanceId = Math.random().toString(36).slice(2, 8));
