@@ -1700,6 +1700,7 @@ export default function Home() {
       setActiveView("list");
     }
     if (isTablet) {
+      setSidebarOpen(false);
       setTabletListVisible(true);
     }
     if (viewingClient) {
@@ -1723,6 +1724,7 @@ export default function Home() {
         setActiveView("list");
       }
       if (isTablet) {
+        setSidebarOpen(false);
         setTabletListVisible(true);
       }
       if (client) await fetchScheduledEmails(client);
@@ -1742,6 +1744,7 @@ export default function Home() {
         setActiveView("list");
       }
       if (isTablet) {
+        setSidebarOpen(false);
         setTabletListVisible(true);
       }
 
@@ -1764,6 +1767,7 @@ export default function Home() {
         setActiveView("list");
       }
       if (isTablet) {
+        setSidebarOpen(false);
         setTabletListVisible(true);
       }
 
@@ -1787,8 +1791,9 @@ export default function Home() {
       setActiveView("list");
     }
 
-    // On tablet, show the list again
+    // On tablet, close sidebar and show the list again
     if (isTablet) {
+      setSidebarOpen(false);
       setTabletListVisible(true);
     }
 
@@ -1812,8 +1817,9 @@ export default function Home() {
       setActiveView("list");
     }
 
-    // On tablet, show the list again
+    // On tablet, close sidebar and show the list again
     if (isTablet) {
+      setSidebarOpen(false);
       setTabletListVisible(true);
     }
 
@@ -1837,8 +1843,9 @@ export default function Home() {
       setActiveView("list");
     }
 
-    // On tablet, show the list again
+    // On tablet, close sidebar and show the list again
     if (isTablet) {
+      setSidebarOpen(false);
       setTabletListVisible(true);
     }
 
