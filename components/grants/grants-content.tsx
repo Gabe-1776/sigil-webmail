@@ -106,6 +106,15 @@ type Invoice = {
   memo: string;
   payOptions: { symbol: string; contract: string; quantity: string }[];
   expiresAt: string;
+  // The actor whose wallet actually has to sign — always the human owner,
+  // even when the invoice is for an AGENT's storage upgrade (agents never
+  // pay for themselves; see resolveQuotaOwner on the backend). Every invoice
+  // route already returns this — it was just never captured here, which is
+  // exactly what caused the account-switcher (viewing an agent's mailbox
+  // tab, whose scoped `sigil_actor` is the agent's own actor, not the
+  // owner's) to look like a different wallet and force a fresh reconnect on
+  // every purchase for an agent instead of reusing the owner's session.
+  creditsWallet: string;
 };
 type StoragePlanStatus = {
   mailboxActor: string;
@@ -498,7 +507,12 @@ export default function GrantsContent() {
   // session in wallet-session-store so the NEXT purchase in this visit can
   // skip straight to a transfer signature instead of reconnecting — see
   // getWalletSession below, which is what callers should actually use.
-  async function freshWalletSession(): Promise<any> {
+  // expectedActor is always the PAYER (invoice.creditsWallet — the human
+  // owner), never the page's locally-active `actor` state. `actor` follows
+  // the account switcher and becomes an AGENT's own actor when viewing that
+  // agent's mailbox tab, but agents never pay for themselves — the owner's
+  // wallet signs every purchase, including an agent's storage upgrade.
+  async function freshWalletSession(expectedActor: string): Promise<any> {
     try {
       const stale: string[] = [];
       for (let i = 0; i < localStorage.length; i++) {
@@ -517,8 +531,8 @@ export default function GrantsContent() {
     });
     if (!session) throw new Error("Wallet connection was cancelled");
     const connected = session.auth.actor.toString();
-    if (actor && connected !== actor) {
-      throw new Error(`Connected wallet (${connected}) doesn't match your logged-in account (${actor}) — connect the same wallet you signed in with.`);
+    if (expectedActor && connected !== expectedActor) {
+      throw new Error(`Connected wallet (${connected}) doesn't match the account this payment needs (${expectedActor}) — connect the same wallet you signed in with.`);
     }
     useWalletSessionStore.getState().setSession(session);
     return session;
@@ -530,26 +544,25 @@ export default function GrantsContent() {
   // whether the session came from cache, so the caller knows whether a
   // transact failure means "genuinely broken" or just "cache went stale,
   // worth one silent retry."
-  async function getWalletSession(forceFresh = false): Promise<{ session: any; reused: boolean }> {
+  async function getWalletSession(expectedActor: string, forceFresh = false): Promise<{ session: any; reused: boolean }> {
     if (!forceFresh) {
       const cached: any = useWalletSessionStore.getState().session;
       // TEMP DEBUG (remove once the reuse-not-kicking-in report is
       // resolved) — logs exactly why a cache hit/miss happened, since
       // this can only be observed live in a real browser.
-      console.log("[wallet-session] getWalletSession: cached=", !!cached, "cachedActor=", cached?.auth?.actor?.toString(), "currentActor=", actor);
+      console.log("[wallet-session] getWalletSession: cached=", !!cached, "cachedActor=", cached?.auth?.actor?.toString(), "expectedActor=", expectedActor);
       // Re-verify actor match on every reuse, not just at connect time —
       // the cache is a global singleton, so it could be holding a session
-      // from a DIFFERENT logged-in account if the human switched accounts
-      // (see components/layout account-switcher) between purchases.
+      // from a DIFFERENT wallet if the human connected a different one.
       // Stale-for-this-actor is treated as a plain cache miss, not an error.
-      if (cached && actor && cached.auth?.actor?.toString() === actor) {
+      if (cached && expectedActor && cached.auth?.actor?.toString() === expectedActor) {
         console.log("[wallet-session] reusing cached session — should be 1 sign only");
         return { session: cached, reused: true };
       }
       if (cached) useWalletSessionStore.getState().clearSession();
     }
     console.log("[wallet-session] no usable cache — doing a fresh connect (forceFresh=" + forceFresh + ")");
-    return { session: await freshWalletSession(), reused: false };
+    return { session: await freshWalletSession(expectedActor), reused: false };
   }
 
   async function transactWithTimeout(session: any, payload: any, opts: any, ms = 90_000): Promise<any> {
@@ -567,13 +580,24 @@ export default function GrantsContent() {
   // Signs+broadcasts the transfer for one of the invoice's payOptions
   // directly, instead of making the human copy fields into a separate app.
   // Tries a cached wallet session first (1 signature — just the transfer);
-  // if that fails, assumes the cache went stale, clears it, and transparently
-  // retries once with a genuinely fresh connect (2 signatures, same as the
-  // old always-fresh behavior) rather than surfacing a confusing error for
-  // what's really just an expired cache.
+  // if that fails for a reason that means the SESSION is broken (timeout,
+  // delivery failure, identity mismatch), assumes the cache went stale,
+  // clears it, and transparently retries once with a genuinely fresh
+  // connect. A plain user CANCEL (@proton/link's E_CANCEL — the human just
+  // declined this one transaction) is NOT treated as a broken session: the
+  // cache is left alone and nothing auto-retries, so clicking Pay again
+  // reuses the same still-good session instead of forcing a surprise
+  // reconnect. Confirmed live 2026-07-19 that treating every failure the
+  // same way was exactly what made "cancel, then try again" force a fresh
+  // sign-in even though the wallet connection itself was fine.
   const handlePayWithWallet = async (invoice: Invoice, symbol: string) => {
     const opt = invoice.payOptions.find((o) => o.symbol === symbol);
     if (!opt || !actor) return;
+    // Always the human owner (see the Invoice.creditsWallet comment) — NOT
+    // the page's active `actor`, which is the AGENT's own actor when the
+    // account switcher is on that agent's mailbox tab. Falls back to `actor`
+    // only for defensive safety against a malformed/older response.
+    const payerActor = invoice.creditsWallet || actor;
     setPayFlow((pf) => (pf ? { ...pf, phase: "waiting", error: "" } : pf));
     setSigning(true);
     const cachedAtStart: any = useWalletSessionStore.getState().session;
@@ -581,25 +605,30 @@ export default function GrantsContent() {
     try { loginInstance = localStorage.getItem("wallet_session_debug_login_instance") ?? "none-recorded"; } catch { /* noop */ }
     setSigningDebug(
       `debug: cache ${cachedAtStart ? "present" : "EMPTY"}` +
-      (cachedAtStart ? `, cachedActor="${cachedAtStart.auth?.actor?.toString()}" vs currentActor="${actor}"` : "") +
+      (cachedAtStart ? `, cachedActor="${cachedAtStart.auth?.actor?.toString()}" vs payerActor="${payerActor}"` : "") +
       ` | storeInstance(here)=${WALLET_SESSION_STORE_INSTANCE_ID} storeInstance(atLogin)=${loginInstance}`
     );
     const action = {
       account: opt.contract,
       name: "transfer",
-      authorization: [{ actor, permission: "active" }],
-      data: { from: actor, to: invoice.payTo, quantity: opt.quantity, memo: invoice.memo },
+      authorization: [{ actor: payerActor, permission: "active" }],
+      data: { from: payerActor, to: invoice.payTo, quantity: opt.quantity, memo: invoice.memo },
     };
     try {
-      const { session, reused } = await getWalletSession();
+      const { session, reused } = await getWalletSession(payerActor);
       setSigningDebug((d) => `${d} → ${reused ? "REUSING cached session (should be 1 sign)" : "fresh connect (2 signs expected)"}`);
       try {
         await transactWithTimeout(session, { actions: [action] }, { broadcast: true });
       } catch (err: any) {
+        if (err?.code === "E_CANCEL") {
+          setSigningDebug((d) => `${d} → user cancelled — session kept, no auto-retry`);
+          setPayFlow((pf) => (pf ? { ...pf, phase: "waiting", error: "Payment cancelled — click Pay to try again" } : pf));
+          return;
+        }
         if (!reused) throw err; // already a fresh session — this is a real failure
         setSigningDebug((d) => `${d} → reused session's transact FAILED (${err?.message ?? err}), falling back to fresh connect`);
         useWalletSessionStore.getState().clearSession();
-        const { session: fresh } = await getWalletSession(true);
+        const { session: fresh } = await getWalletSession(payerActor, true);
         await transactWithTimeout(fresh, { actions: [action] }, { broadcast: true });
       }
       // Signed + broadcast successfully — the wallet already confirmed this
@@ -607,7 +636,11 @@ export default function GrantsContent() {
       // (the polling effect below), not waiting on the payment itself.
       setPayFlow((pf) => (pf ? { ...pf, justSigned: true } : pf));
     } catch (err: any) {
-      setPayFlow((pf) => (pf ? { ...pf, phase: "waiting", error: err?.message ?? String(err) } : pf));
+      if (err?.code === "E_CANCEL") {
+        setPayFlow((pf) => (pf ? { ...pf, phase: "waiting", error: "Payment cancelled — click Pay to try again" } : pf));
+      } else {
+        setPayFlow((pf) => (pf ? { ...pf, phase: "waiting", error: err?.message ?? String(err) } : pf));
+      }
     } finally {
       setSigning(false);
     }
