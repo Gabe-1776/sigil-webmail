@@ -1,4 +1,4 @@
-import { unlink, writeFileSync } from "fs";
+import { rmSync, writeFileSync } from "fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock NextResponse before importing the route
@@ -152,9 +152,7 @@ describe('config API route', () => {
 
     const config = await getConfig();
 
-    unlink('./session-secret', (err) => {
-      if (err) throw err;
-    });
+    rmSync('./session-secret', { force: true });
 
     expect(config.rememberMeEnabled).toBe(true);
   });
@@ -179,9 +177,7 @@ describe('config API route', () => {
 
     const config2 = await getConfig();
 
-    unlink('./session-secret', (err) => {
-      if (err) throw err;
-    });
+    rmSync('./session-secret', { force: true });
 
     expect(config2.settingsSyncEnabled).toBe(true);
   });

@@ -71,10 +71,13 @@ function parseBirthdayDate(date: string | PartialDate | Timestamp): { month: num
     try {
       const parsed = parseISO(date.utc);
       if (!isNaN(parsed.getTime())) {
+        // Timestamp.utc is an absolute UTC instant. Reading it through local
+        // getters shifts late-night UTC birthdays to the previous/next day in
+        // non-UTC time zones.
         return {
-          month: parsed.getMonth() + 1,
-          day: parsed.getDate(),
-          year: parsed.getFullYear(),
+          month: parsed.getUTCMonth() + 1,
+          day: parsed.getUTCDate(),
+          year: parsed.getUTCFullYear(),
         };
       }
     } catch {
