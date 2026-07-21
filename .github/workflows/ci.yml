@@ -1,9 +1,20 @@
 name: CI
 
-# Validates every push/PR before it can ship — lint, typecheck, build, and
-# the translation test suite. This does NOT deploy anything; it only
-# catches broken code before a human runs bin/deploy-webmail.sh against the
-# live Hetzner box. See OPERATIONS.md "Deploying webmail changes".
+# Validates every push/PR before it can ship — lint, typecheck, the FULL
+# vitest suite (119 files / 1970 tests — `npm run test`; test:translations
+# below stays too as a single fast-fail signal, but `test` is the real
+# blocking gate as of 2026-07-20, closing FLAG #10's "almost the entire
+# webmail suite [is] not blocking" finding), and build. This does NOT
+# deploy anything; it only catches broken code before a human runs
+# bin/deploy-webmail.sh against the live Hetzner box. See OPERATIONS.md
+# "Deploying webmail changes".
+#
+# Lives HERE (bulwark-fork's own repo/CI), not in the parent agent-mail
+# repo's .github/workflows/ci.yml, because bulwark-fork is a nested git
+# repository (gitlink) with its own remote (github.com/bulwarkmail/webmail)
+# — the parent repo's CI checks out only the parent tree and cannot see
+# into a gitlink's contents, so a workflow file placed in the parent repo
+# would have nothing to run against.
 
 on:
   push:
@@ -37,6 +48,9 @@ jobs:
 
       - name: Translation tests
         run: npm run test:translations
+
+      - name: Full test suite
+        run: npm run test
 
       - name: Build
         run: npm run build
