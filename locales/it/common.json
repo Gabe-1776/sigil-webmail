@@ -17,6 +17,7 @@
     "reconnecting": "Connessione persa. Tentativo di riconnessione…",
     "error": {
       "invalid_credentials": "Email o password non valida",
+      "temporarily_blocked": "Il server di posta ha sospeso temporaneamente le connessioni dalla tua rete. Il tuo account e la tua password sono a posto e non è andato perso nulla. Di solito si risolve entro circa 15 minuti.",
       "connection_failed": "Impossibile connettersi al server",
       "cors_blocked": "Il server è raggiungibile ma sta bloccando le richieste cross-origin. Controlla le impostazioni CORS del tuo server JMAP e consenti questo dominio.",
       "server_error": "Il server non è temporaneamente disponibile. Riprova più tardi.",

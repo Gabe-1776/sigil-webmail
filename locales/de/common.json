@@ -17,6 +17,7 @@
     "reconnecting": "Verbindung verloren. Verbindung wird wiederhergestellt…",
     "error": {
       "invalid_credentials": "Ungültige E-Mail-Adresse oder Passwort",
+      "temporarily_blocked": "Der Mailserver hat Verbindungen aus Ihrem Netzwerk vorübergehend pausiert. Ihr Konto und Ihr Passwort sind in Ordnung, es ist nichts verloren gegangen. Das behebt sich normalerweise innerhalb von etwa 15 Minuten.",
       "connection_failed": "Verbindung zum Server fehlgeschlagen",
       "cors_blocked": "Der Server ist erreichbar, blockiert aber Cross-Origin-Anfragen. Überprüfen Sie die CORS-Einstellungen Ihres JMAP-Servers und erlauben Sie diese Domain.",
       "server_error": "Der Server ist vorübergehend nicht erreichbar. Bitte versuchen Sie es später erneut.",

@@ -17,6 +17,7 @@
     "reconnecting": "Forbindelse mistet. Forsøger at genoprette forbindelse…",
     "error": {
       "invalid_credentials": "Ugyldig e-mail eller adgangskode. Kontroller dine oplysninger og prøv igen.",
+      "temporarily_blocked": "Mailserveren har midlertidigt sat forbindelser fra dit netværk på pause. Din konto og din adgangskode fejler ikke noget, og intet er gået tabt. Det plejer at løse sig inden for cirka 15 minutter.",
       "connection_failed": "Kan ikke nå serveren. Kontrollér din internetforbindelse og prøv igen.",
       "cors_blocked": "Serveren kan nås, men blokerer cross-origin-anmodninger. Kontrollér JMAP-serverens CORS-indstillinger og tillad dette domæne.",
       "server_error": "Serveren er midlertidigt utilgængelig. Prøv igen senere.",

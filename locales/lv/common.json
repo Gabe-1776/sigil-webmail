@@ -17,6 +17,7 @@
     "reconnecting": "Savienojums pārtraukts. Mēģina izveidot savienojumu...",
     "error": {
       "invalid_credentials": "Nepareiza e-pasta adrese vai parole. Pārbaudiet datus un mēģiniet vēlreiz.",
+      "temporarily_blocked": "Pasta serveris uz laiku ir apturējis savienojumus no jūsu tīkla. Jūsu konts un parole ir kārtībā, un nekas nav zaudēts. Parasti tas atrisinās aptuveni 15 minūšu laikā.",
       "connection_failed": "Neizdevās izveidot savienojumu ar serveri. Pārbaudiet interneta pieslēgumu.",
       "cors_blocked": "Serveris ir pieejams, bet bloķē pieprasījumus no citiem avotiem. Pārbaudiet JMAP servera CORS iestatījumus.",
       "server_error": "Serveris īslaicīgi nav pieejams. Mēģiniet vēlāk.",

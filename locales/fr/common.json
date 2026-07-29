@@ -17,6 +17,7 @@
     "reconnecting": "Connexion perdue. Tentative de reconnexion…",
     "error": {
       "invalid_credentials": "Email ou mot de passe invalide",
+      "temporarily_blocked": "Le serveur de messagerie a temporairement suspendu les connexions depuis votre réseau. Votre compte et votre mot de passe sont intacts, et rien n'est perdu. Cela se rétablit généralement en 15 minutes environ.",
       "connection_failed": "Échec de la connexion au serveur",
       "cors_blocked": "Le serveur est joignable mais bloque les requêtes cross-origin. Vérifiez la configuration CORS de votre serveur JMAP et autorisez ce domaine.",
       "server_error": "Le serveur est temporairement indisponible. Veuillez réessayer plus tard.",

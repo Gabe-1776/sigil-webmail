@@ -516,6 +516,22 @@ export class JMAPClient implements IJMAPClient {
   private rateLimitCallback: ((rateLimited: boolean, retryAfterMs: number) => void) | null = null;
   private rateLimitTimeout: NodeJS.Timeout | null = null;
   private lastRateLimitNoticeAt: number = 0;
+  /**
+   * Set once the server has DEFINITIVELY rejected our credential (401 on a
+   * session refresh) or blocked us (403). Until new credentials arrive, every
+   * further request short-circuits without touching the network.
+   *
+   * Without this the client is an amplifier: a single user action fans out to
+   * dozens of authenticated JMAP calls (mailboxes, emails, identities,
+   * threads), each 401 triggers a refreshSession + retry, and the ping
+   * interval keeps re-authenticating on a timer even while idle. With a dead
+   * credential — exactly what a deleted-then-recreated account leaves behind —
+   * that turns "I tried signing in a few times" into 100+ auth failures, which
+   * is Stalwart's daily ban threshold. Gabriel hit the resulting hour-long IP
+   * ban repeatedly on 2026-07-29 and rightly pointed out the numbers made no
+   * sense: he wasn't the one making those attempts, we were.
+   */
+  private credentialRejected = false;
 
   constructor(serverUrl: string, username: string, password: string) {
     this.serverUrl = serverUrl.replace(/\/$/, '');
@@ -539,6 +555,7 @@ export class JMAPClient implements IJMAPClient {
 
   updateAccessToken(token: string): void {
     this.authHeader = `Bearer ${token}`;
+    this.credentialRejected = false; // fresh credential — allow requests again
   }
 
   /** Upgrade an existing basic-auth client to bearer-token auth (e.g. after TOTP token exchange). */
@@ -562,6 +579,7 @@ export class JMAPClient implements IJMAPClient {
   updateBasicAuth(newPassword: string): void {
     this.password = newPassword;
     this.authHeader = `Basic ${btoa(`${this.username}:${newPassword}`)}`;
+    this.credentialRejected = false; // fresh credential — allow requests again
   }
 
   getAuthHeader(): string {
@@ -578,6 +596,13 @@ export class JMAPClient implements IJMAPClient {
       const remaining = this.rateLimitedUntil - Date.now();
       this.notifyRateLimitBlocked(remaining);
       throw new RateLimitError(remaining);
+    }
+
+    // Credential already rejected: stop before we make it worse. Every extra
+    // request here counts toward the server's auth-failure ban and buys
+    // nothing — the credential cannot become valid on its own.
+    if (this.credentialRejected) {
+      throw new Error('Credential rejected: sign in again (no further attempts will be made)');
     }
 
     const headers = { ...init?.headers as Record<string, string>, 'Authorization': this.authHeader };
@@ -658,6 +683,17 @@ export class JMAPClient implements IJMAPClient {
   private async fetchSessionResponse(): Promise<Response> {
     const discoveryUrl = `${this.serverUrl}/.well-known/jmap`;
     const response = await this.authenticatedFetch(discoveryUrl, { method: 'GET' });
+
+    // Both connect() and refreshSession() come through here, so this is the one
+    // place that sees every verdict on our credential. 401 = the credential is
+    // bad, 403 = the server is already blocking this IP. Neither is fixable by
+    // asking again, and continuing to ask is what turns a handful of sign-in
+    // attempts into a ban (see the credentialRejected comment above).
+    if (response.status === 401 || response.status === 403) {
+      this.credentialRejected = true;
+      this.stopKeepAlive();
+    }
+
     if (!response.ok || !response.redirected) return response;
 
     const peek = await response.clone().json().catch(() => null);
@@ -675,6 +711,7 @@ export class JMAPClient implements IJMAPClient {
     const response = await this.fetchSessionResponse();
 
     if (!response.ok) {
+      // The breaker is tripped in fetchSessionResponse, which this calls.
       throw new Error(`Session refresh failed: ${response.status}`);
     }
 
@@ -756,6 +793,12 @@ export class JMAPClient implements IJMAPClient {
     this.pingInterval = setInterval(async () => {
       // Skip ping while rate-limited to avoid compounding auth failures
       if (this.isRateLimited()) return;
+      // A rejected credential will not heal, and this fires every 30s — left
+      // unguarded it re-authenticates forever and keeps the IP ban alive.
+      if (this.credentialRejected) {
+        this.stopKeepAlive();
+        return;
+      }
       try {
         await this.ping();
         this.connectionChangeCallback?.(true);

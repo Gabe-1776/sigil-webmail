@@ -17,6 +17,7 @@
     "reconnecting": "Conexiune pierdută. Se încearcă reconectarea…",
     "error": {
       "invalid_credentials": "Adresă de e-mail sau parolă invalidă. Vă rugăm să verificați datele de autentificare și să încercați din nou.",
+      "temporarily_blocked": "Serverul de e-mail a suspendat temporar conexiunile din rețeaua ta. Contul și parola sunt în regulă și nu s-a pierdut nimic. De obicei se rezolvă în aproximativ 15 minute.",
       "connection_failed": "Nu se poate stabili conexiunea cu serverul. Verificați conexiunea la internet și încercați din nou.",
       "cors_blocked": "Serverul este accesibil, dar blochează cererile de tip „cross-origin”. Verificați setările CORS ale serverului JMAP și permiteți acest domeniu.",
       "server_error": "Serverul este temporar indisponibil. Vă rugăm să încercați din nou mai târziu.",

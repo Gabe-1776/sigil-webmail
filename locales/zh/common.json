@@ -17,6 +17,7 @@
     "reconnecting": "连接已断开，正在尝试重连…",
     "error": {
       "invalid_credentials": "邮箱地址或密码无效。请检查后重试。",
+      "temporarily_blocked": "邮件服务器已暂时暂停来自您所在网络的连接。您的账户和密码没有问题，也没有丢失任何数据。通常约 15 分钟后会自动恢复。",
       "connection_failed": "无法访问服务器。检查您的网络连接，然后重试。",
       "cors_blocked": "服务器可访问，但正在阻止跨源请求。请检查 JMAP 服务器的 CORS 设置，并允许此域名。",
       "server_error": "服务器暂时不可用，请稍后重试。",

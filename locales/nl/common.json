@@ -17,6 +17,7 @@
     "reconnecting": "Verbinding verloren. Opnieuw verbinden…",
     "error": {
       "invalid_credentials": "Ongeldig e-mailadres of wachtwoord",
+      "temporarily_blocked": "De mailserver heeft verbindingen vanaf uw netwerk tijdelijk gepauzeerd. Uw account en wachtwoord zijn in orde en er is niets verloren gegaan. Dit lost zich meestal binnen ongeveer 15 minuten op.",
       "connection_failed": "Kan geen verbinding maken met de server",
       "cors_blocked": "De server is bereikbaar maar blokkeert cross-origin verzoeken. Controleer de CORS-instellingen van uw JMAP-server en sta dit domein toe.",
       "server_error": "De server is tijdelijk niet beschikbaar. Probeer het later opnieuw.",

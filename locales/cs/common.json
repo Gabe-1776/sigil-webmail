@@ -17,6 +17,7 @@
     "reconnecting": "Spojení ztraceno. Pokus o opětovné připojení…",
     "error": {
       "invalid_credentials": "Neplatná e-mailová adresa nebo heslo. Zkontrolujte přihlašovací údaje a zkuste to znovu.",
+      "temporarily_blocked": "Poštovní server dočasně pozastavil připojení z vaší sítě. Váš účet i heslo jsou v pořádku a nic se neztratilo. Obvykle se to vyřeší přibližně do 15 minut.",
       "connection_failed": "Nelze se připojit k serveru. Zkontrolujte připojení k internetu a zkuste to znovu.",
       "cors_blocked": "Server je dostupný, ale blokuje požadavky mezi doménami. Zkontrolujte nastavení CORS serveru JMAP a povolte tuto doménu.",
       "server_error": "Server je dočasně nedostupný. Zkuste to prosím později.",

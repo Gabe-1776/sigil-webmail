@@ -17,6 +17,7 @@
     "reconnecting": "Kapcsolat megszakadt. Újracsatlakozás...",
     "error": {
       "invalid_credentials": "Helytelen e-mail vagy jelszó. Ellenőrizd a megadott adatokat és próbáld újra.",
+      "temporarily_blocked": "A levelezőszerver átmenetileg szüneteltette a hálózatáról érkező kapcsolatokat. A fiókja és a jelszava rendben van, és semmi sem veszett el. Ez általában körülbelül 15 percen belül megszűnik.",
       "connection_failed": "Nem sikerült elérni a szervert. Ellenőrizd az internetkapcsolatod és próbáld újra.",
       "cors_blocked": "A szerver elérhető, de blokkolja a több tartományból érkező kéréseket. Ellenőrizd a JMAP szerver CORS beállításait és engedélyezd ezt a tartományt.",
       "server_error": "A szerver átmenetileg nem elérhető. Kérjük, próbáld újra később.",

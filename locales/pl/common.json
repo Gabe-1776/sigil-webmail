@@ -17,6 +17,7 @@
     "reconnecting": "Utracono połączenie. Próba ponownego połączenia…",
     "error": {
       "invalid_credentials": "Nieprawidłowy adres e-mail lub hasło. Sprawdź dane logowania i spróbuj ponownie.",
+      "temporarily_blocked": "Serwer poczty tymczasowo wstrzymał połączenia z Twojej sieci. Twoje konto i hasło są w porządku, nic nie zostało utracone. Zwykle mija to w ciągu około 15 minut.",
       "connection_failed": "Nie można połączyć się z serwerem. Sprawdź połączenie internetowe i spróbuj ponownie.",
       "cors_blocked": "Serwer jest osiągalny, ale blokuje żądania między domenami. Sprawdź ustawienia CORS serwera JMAP i zezwól na tę domenę.",
       "server_error": "Serwer jest tymczasowo niedostępny. Spróbuj ponownie później.",

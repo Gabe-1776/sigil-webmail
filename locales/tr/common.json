@@ -17,6 +17,7 @@
     "reconnecting": "Bağlantı kesildi. Yeniden bağlanılmaya çalışılıyor…",
     "error": {
       "invalid_credentials": "Geçersiz e-posta veya şifre. Lütfen bilgilerinizi kontrol edip tekrar deneyin.",
+      "temporarily_blocked": "Posta sunucusu ağınızdan gelen bağlantıları geçici olarak durdurdu. Hesabınızda ve parolanızda bir sorun yok, hiçbir veri kaybolmadı. Bu durum genellikle yaklaşık 15 dakika içinde kendiliğinden düzelir.",
       "connection_failed": "Sunucuya ulaşılamıyor. İnternet bağlantınızı kontrol edip tekrar deneyin.",
       "cors_blocked": "Sunucuya ulaşılıyor ancak çapraz kaynak istekleri engelleniyor. JMAP sunucunuzun CORS ayarlarını kontrol edip bu etki alanına izin verin.",
       "server_error": "Sunucu geçici olarak kullanılamıyor. Lütfen daha sonra tekrar deneyin.",

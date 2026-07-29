@@ -17,6 +17,7 @@
     "reconnecting": "Conexión perdida. Intentando reconectar…",
     "error": {
       "invalid_credentials": "Correo electrónico o contraseña inválidos",
+      "temporarily_blocked": "El servidor de correo ha pausado temporalmente las conexiones desde tu red. Tu cuenta y tu contraseña están bien, y no se ha perdido nada. Suele resolverse en unos 15 minutos.",
       "connection_failed": "No se pudo conectar con el servidor",
       "cors_blocked": "El servidor es accesible pero está bloqueando las solicitudes de origen cruzado. Verifique la configuración CORS de su servidor JMAP y permita este dominio.",
       "server_error": "El servidor no está disponible temporalmente. Inténtalo más tarde.",
