@@ -23,6 +23,12 @@ on:
 
 jobs:
   prepare:
+    # Upstream Bulwark's release pipeline: it publishes container images to
+    # ghcr.io. This fork deploys by rsync + a build on the server, never from
+    # here, so the job has nothing to push and failed on every push to main.
+    # Gated rather than deleted so upstream merges stay conflict-free — it
+    # simply doesn't run outside bulwarkmail/webmail. (2026-07-29)
+    if: github.repository == 'bulwarkmail/webmail'
     runs-on: ubuntu-latest
     outputs:
       image_name: ${{ steps.set.outputs.image_name }}
