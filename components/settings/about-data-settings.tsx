@@ -14,6 +14,9 @@ import { getPathPrefix } from '@/lib/browser-navigation';
 import { SpamSiegeGame } from './spam-siege-game';
 
 const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0";
+// The published source for THIS fork. Overridable so a downstream re-fork can
+// point at its own tree without patching components (AGPL §13 again).
+const SOURCE_URL = process.env.NEXT_PUBLIC_SOURCE_URL || "https://github.com/Gabe-1776/sigil-webmail";
 const GIT_COMMIT = process.env.NEXT_PUBLIC_GIT_COMMIT || "unknown";
 
 function VersionUpdateTag() {
@@ -144,13 +147,17 @@ export function AboutDataSettings() {
               </p>
             </div>
           </button>
+          {/* AGPL-3.0 §13: users interacting with this service over a network
+              must be offered THIS build's source — not upstream's. Linking
+              bulwarkmail/webmail pointed people at code we don't run. Upstream
+              is credited in the README of the fork instead. */}
           <a
-            href="https://github.com/bulwarkmail/webmail"
+            href={SOURCE_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
-            GitHub <ExternalLink className="w-3 h-3" />
+            Source <ExternalLink className="w-3 h-3" />
           </a>
         </div>
       </div>
