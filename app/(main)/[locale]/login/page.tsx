@@ -32,6 +32,10 @@ function findServerByDomain(servers: PublicJmapServerEntry[], email: string | un
 
 const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0";
 const GIT_COMMIT = process.env.NEXT_PUBLIC_GIT_COMMIT || "unknown";
+// AGPL-3.0 §13: the source of THIS build, offered to every user who
+// interacts with it over the network — including before they log in,
+// which is the only screen some visitors ever see.
+const SOURCE_URL = process.env.NEXT_PUBLIC_SOURCE_URL || "https://github.com/Gabe-1776/sigil-webmail";
 
 function SigilIcon({ className }: { className?: string }) {
   return (
@@ -78,6 +82,14 @@ function VersionBadge() {
           <div className="space-y-0.5">
             <p>Version: <span className="font-medium">{APP_VERSION}</span></p>
             <p>Build: <span className="font-medium">{GIT_COMMIT}</span></p>
+            <a
+              href={SOURCE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-2 hover:opacity-80"
+            >
+              Source (AGPL-3.0)
+            </a>
           </div>
           <button
             onClick={handleCopy}
