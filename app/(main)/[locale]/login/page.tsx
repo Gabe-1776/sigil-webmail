@@ -7,8 +7,11 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 
 import { useAuthStore } from "@/stores/auth-store";
-import { useWalletSessionStore, WALLET_SESSION_STORE_INSTANCE_ID } from "@/stores/wallet-session-store";
+import { useWalletSessionStore } from "@/stores/wallet-session-store";
 import { generateAccountId, getAccountScopedKey } from "@/lib/account-utils";
+import { getNetwork, getSessionNetwork, setSessionNetwork, isNetworkInMaintenance, DEFAULT_NETWORK, type XprNetworkName } from "@/lib/xpr-network";
+import { purgeProtonSdkStorage, isWalletCancel } from "@/lib/proton-session";
+import { actorFromAccessToken } from "@/lib/sigil-actor";
 import { useAccountStore } from "@/stores/account-store";
 import { useThemeStore } from "@/stores/theme-store";
 import { useShallow } from "zustand/react/shallow";
@@ -151,11 +154,27 @@ export default function LoginPage() {
   const [_selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
   const [oauthMetadata, setOauthMetadata] = useState<OAuthMetadata | null>(null);
   const [oauthDiscoveryDone, setOauthDiscoveryDone] = useState(false);
-  const XPR_AUTH_SERVICE_URL =
-    process.env.NEXT_PUBLIC_XPR_AUTH_SERVICE_URL || "https://auth.mailsigil.pro";
   const [xprLoading, setXprLoading] = useState(false);
   const [xprStatus, setXprStatus] = useState("");
   const [xprError, setXprError] = useState("");
+  // Which network the single "Sign in" button targets. Chosen via the top-left
+  // toggle (mirrors the theme toggle top-right). Purely a pre-login selection —
+  // it just picks which chain + which separate auth backend the sign-in hits;
+  // the session locks to it on login, and switching after that means logout.
+  // Seeded from the last-used network so a returning tester lands where they
+  // were, but always overridden by an explicit toggle. See lib/xpr-network.ts.
+  // Initial value is this deployment's DEFAULT_NETWORK (mainnet build ->
+  // "mainnet", testnet build -> "testnet"), not a hardcoded "mainnet" — a
+  // testnet build must never default the sign-in target to mainnet.
+  const [selectedNetwork, setSelectedNetwork] = useState<XprNetworkName>(DEFAULT_NETWORK);
+  // On a testnet build this always resolves to "testnet", even overriding a
+  // stale/tampered sigil_network value — a testnet deployment must never
+  // DEFAULT its sign-in target to mainnet. Mainnet is still selectable from
+  // the toggle; the wallet login runs in-page and only the mailbox finish
+  // hands off (see handleXprLogin's cross-network handoff).
+  useEffect(() => {
+    setSelectedNetwork(DEFAULT_NETWORK === "testnet" ? "testnet" : getSessionNetwork().name);
+  }, []);
   const sigilGrantToken = searchParams.get("sigil_grant_token") ?? "";
   const [oauthLoading, setOauthLoading] = useState(false);
   const [demoLoading, setDemoLoading] = useState(false);
@@ -183,7 +202,11 @@ export default function LoginPage() {
       setXprLoading(true);
       setXprStatus("Opening shared mailbox…");
       try {
-        const res = await fetch(`${XPR_AUTH_SERVICE_URL}/api/grants/exchange-token`, {
+        // Route through the same session-network resolution as handleXprLogin
+        // (see lib/xpr-network.ts) — selectedNetwork is seeded from
+        // getSessionNetwork() above, so this correctly hits the testnet auth
+        // backend on a testnet build/session instead of always mainnet.
+        const res = await fetch(`${getNetwork(selectedNetwork).authUrl}/api/grants/exchange-token`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ token: sigilGrantToken }),
@@ -248,6 +271,55 @@ export default function LoginPage() {
       }
     } catch { /* sessionStorage unavailable */ }
   }, []);
+
+  // Cross-network handoff receiver (see handleXprLogin's handoff comment).
+  // The sister site (same product, other network) finished wallet
+  // verification and bounced the user here with the fresh access token in
+  // the URL fragment. Scrub the fragment from history FIRST, then prove the
+  // token live via /api/auth/refresh — which also mints a same-actor
+  // replacement, so the carried token isn't the one we keep — and finish the
+  // ordinary mailbox login. Forged/expired payloads land back on the form.
+  const handoffStartedRef = useRef(false);
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash.startsWith("#sigil-xnet=") || handoffStartedRef.current) return;
+    // Wait for config: on the first render serverUrl isn't loaded yet and the
+    // component returns early BEFORE finishMailboxLogin's const initializes —
+    // running then both TDZ-crashes on that binding and captures a stale empty
+    // serverUrl. The [serverUrl] dep re-fires this effect on the config-loaded
+    // (full) render, where both are ready. (2026-07-28 TDZ incident.)
+    if (!serverUrl) return;
+    handoffStartedRef.current = true;
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    let cancelled = false;
+    (async () => {
+      setXprLoading(true);
+      setXprStatus("Completing sign-in…");
+      try {
+        const payload = JSON.parse(decodeURIComponent(hash.slice("#sigil-xnet=".length)));
+        const token = typeof payload?.t === "string" ? payload.t : "";
+        if (!token) throw new Error("Malformed handoff payload");
+        const refresh = await fetch(`${getNetwork(DEFAULT_NETWORK).authUrl}/api/auth/refresh`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        }).then((r) => r.json());
+        if (!refresh?.ok || !refresh.accessToken) {
+          throw new Error(refresh?.error || "Handoff sign-in was rejected — please sign in again");
+        }
+        if (cancelled) return;
+        await finishMailboxLogin(refresh.accessToken, DEFAULT_NETWORK);
+      } catch (err) {
+        if (!cancelled) {
+          setXprError(err instanceof Error ? err.message : String(err));
+          setXprLoading(false);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+    // Re-fires when serverUrl arrives (see the guard above);
+    // finishMailboxLogin reads the current render scope.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverUrl]);
 
   useEffect(() => {
     if (error && error !== prevError.current) {
@@ -454,6 +526,36 @@ export default function LoginPage() {
     setShowThemeMenu(false);
   }, [setTheme]);
 
+  // Runtime maintenance state from the selected network's auth service
+  // (2026-07-28, Gabriel: unlock by IP). Authoritative over the build-time
+  // flag because the SERVER knows the visitor's IP: exempt lines get
+  // loginMaintenance:false from /api/public-config and never see the pause
+  // UI, everyone else gets the notice. null = still loading → build-time
+  // flag fills in until the answer arrives.
+  //
+  // THIS MUST STAY ABOVE THE EARLY RETURNS BELOW. It originally sat next to
+  // its only consumer (`networkPaused`, further down) — but the first render
+  // returns early at `!serverUrl` before reaching that point, so the render
+  // where config arrived ran MORE hooks than the one before it and React
+  // threw #310 into the route error boundary. That's why a reload showed
+  // "Something went wrong" while "Try again" worked: the retry remounts with
+  // config already cached, so its first render is the full one and the hook
+  // count is stable. (2026-07-28 login-page hooks-order incident.)
+  const [remoteMaintenance, setRemoteMaintenance] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setRemoteMaintenance(null);
+    fetch(`${getNetwork(selectedNetwork).authUrl}/api/public-config`)
+      .then((r) => r.json())
+      .then((cfg) => {
+        if (!cancelled && typeof cfg?.loginMaintenance === "boolean") {
+          setRemoteMaintenance(cfg.loginMaintenance);
+        }
+      })
+      .catch(() => { /* auth unreachable or older build — build-time flag fills in */ });
+    return () => { cancelled = true; };
+  }, [selectedNetwork]);
+
   if (configLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted/30">
@@ -567,14 +669,69 @@ export default function LoginPage() {
   // actually proven working) and feed it into Bulwark's existing basic-auth
   // `login()` — same session/cookie code as the password form, just never
   // typed by a human.
-  const XPR_CHAIN_ID = "384da888112027f0321850a169f737c33e53b388aad48b5adace4bab97f437e0";
-  const XPR_ENDPOINTS = ["https://proton.eosusa.io", "https://proton.protonuk.io"];
+  // NOTE (2026-07-22): a one-click "Continue as <actor>" resume flow lived
+  // here briefly and was deliberately parked — session creation must always
+  // be wallet-signature-gated (SimpleDex-style), Gabriel's call. Full
+  // implementation preserved in BLUEPRINT-continue-as-login.md.
+  // Purge the SDK's own persisted link/session storage — used before a
+  // forced-fresh connect and after a stale restored session (the 2026-07-10
+  // "transact hangs forever" failure mode). Same pattern as
+  // grants-content.tsx's freshWalletSession.
+  // The shared tail of every XPR login: mint a Stalwart app-password from
+  // the auth service and drive Bulwark's basic-auth login() with it (never
+  // typed by a human — see the NOTE above handleXprLogin for why not OAuth).
+  // Called by handleXprLogin on this deployment's own network, and by the
+  // cross-network handoff receiver above with the freshly re-validated token.
+  const finishMailboxLogin = async (accessToken: string, networkName: XprNetworkName) => {
+    const authUrl = getNetwork(networkName).authUrl;
+    setXprStatus(t("xpr_minting_credential") || "Setting up your mailbox access…");
+    const appPasswordRes = await fetch(`${authUrl}/api/auth/app-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ description: "Bulwark webmail session" }),
+    }).then((r) => r.json());
 
-  const handleXprLogin = async () => {
+    if (!appPasswordRes.username || !appPasswordRes.password) {
+      throw new Error(appPasswordRes.error || "Could not provision mailbox access");
+    }
+
+    setXprStatus(t("xpr_signing_in") || "Signing in…");
+    const success = await login(serverUrl, appPasswordRes.username, appPasswordRes.password, undefined, true);
+    if (!success) throw new Error("Mailbox login failed after wallet verification");
+    // Lock the session to the network this login chose — every subsequent
+    // chain + auth call (grants/confirm/refresh) reads this; switching
+    // networks requires a full logout.
+    setSessionNetwork(networkName);
+    // Account-scoped, not a single global pair — otherwise the
+    // Agent Wallets/My Mailbox page stays pinned to whichever
+    // account last completed wallet-connect instead of following
+    // the account switcher. See grants/page.tsx's matching read.
+    const scopedAccountId = generateAccountId(appPasswordRes.username, serverUrl);
+    localStorage.setItem(getAccountScopedKey("sigil_auth_token", scopedAccountId), accessToken);
+    // The XPR ACTOR — NOT the mailbox local part. These differ on testnet,
+    // where a mailbox is `<actor>.testnet@…`: splitting the address gave
+    // "felixpaw.testnet", which every actor-keyed API then failed to match,
+    // so a paid storage upgrade was filed under a mailbox that doesn't exist
+    // and the buyer kept seeing "Upgrade to Pro" (Gabriel 2026-07-28). It was
+    // invisible on mainnet, where mailboxLocalPart() is the identity function.
+    // The access token's `sub` is the actor, straight from the auth service.
+    localStorage.setItem(
+      getAccountScopedKey("sigil_actor", scopedAccountId),
+      actorFromAccessToken(accessToken) || appPasswordRes.username?.split("@")[0] || "",
+    );
+    router.push("/");
+  };
+
+  const handleXprLogin = async (networkName: XprNetworkName, forceFresh = false) => {
     setXprError("");
     setXprLoading(true);
+    // The login choice ("Sign in · Mainnet/Testnet") selects the network for
+    // this whole session — chain, wallet contract, AND which (separate) auth
+    // backend to talk to. Stored so grants/confirm/refresh use the same one;
+    // switching networks requires a full logout. See lib/xpr-network.ts.
+    const net = getNetwork(networkName);
+    const authUrl = net.authUrl;
     try {
-      setXprStatus(t("xpr_connecting_wallet") || "Connecting wallet…");
       const ProtonWebSDK = (await import("@proton/web-sdk")).default;
       await import("@proton/link");
 
@@ -582,65 +739,161 @@ export default function LoginPage() {
       // 'proton'/'anchor' are labeled "Mobile"/"Desktop" by the SDK's own
       // selector, which reads as generic device choices but are actually
       // two different wallet apps Sigil never documents or supports.
-      const { session, loginResult } = await ProtonWebSDK({
-        linkOptions: { chainId: XPR_CHAIN_ID, endpoints: XPR_ENDPOINTS },
-        transportOptions: { requestAccount: "mailsigil" },
-        selectorOptions: { appName: appName || "Sigil Mail", enabledWalletTypes: ["webauth", "anchor", "proton"] },
-      });
+      const SDK_OPTS = {
+        linkOptions: { chainId: net.chainId, endpoints: net.endpoints },
+        transportOptions: { requestAccount: net.mailContract },
+        selectorOptions: { appName: appName || "Sigil Mail", enabledWalletTypes: ["webauth", "anchor", "proton"] as any },
+      };
+
+      // Silent session restore FIRST — the SimpleDex model: restoring the
+      // SDK's stored link session prompts for NOTHING and grants NOTHING;
+      // the sigillogin signature below is still the one and only gate that
+      // creates a Sigil session. Net effect: re-login = exactly ONE wallet
+      // approval (the login signature) instead of two (connect + sign).
+      // Gabriel 2026-07-23 after the Continue-as park: "its still 2
+      // transactions to sign in".
+      let session: any = null;
+      let loginResult: any = null;
+      let restoredSilently = false;
+      if (forceFresh) {
+        purgeProtonSdkStorage();
+      } else {
+        try {
+          const restored = await ProtonWebSDK({
+            ...SDK_OPTS,
+            linkOptions: { ...SDK_OPTS.linkOptions, restoreSession: true },
+          });
+          if (restored?.session) {
+            session = restored.session;
+            restoredSilently = true;
+          }
+        } catch { /* nothing restorable — fall through to a full connect */ }
+      }
+      if (!session) {
+        setXprStatus(t("xpr_connecting_wallet") || "Connecting wallet…");
+        const fresh = await ProtonWebSDK(SDK_OPTS);
+        session = fresh?.session;
+        loginResult = fresh?.loginResult;
+      }
       if (!session) throw new Error("Wallet connection was cancelled");
 
-      const actor = session.auth.actor;
-      const permission = session.auth.permission;
-
       // Verify identity and get a backend access token. Preferred path: the
-      // identity proof ConnectWallet already produced (Proton mobile / Anchor)
-      // — one "Authorize" tap, no transaction prompt. Fallback: the webauth.com
-      // desktop popup returns no proof, so sign a never-broadcast transfer.
+      // identity proof ConnectWallet already produced (fresh first-ever
+      // logins — one "Authorize" tap). Restored sessions have no proof and
+      // go straight to the nonce path; cached-burned proofs fall through to
+      // it. The whole session→verifyRes pipeline lives in one function so
+      // the stale-restore recovery below can rerun it after a fresh connect.
       let verifyRes: { ok?: boolean; error?: string; accessToken?: string };
-      if (loginResult?.proof) {
-        setXprStatus(t("xpr_verifying") || "Verifying…");
-        verifyRes = await fetch(`${XPR_AUTH_SERVICE_URL}/api/auth/verify-proof`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ proof: loginResult.proof.toString(), inviteCode: inviteCode || undefined }),
-        }).then((r) => r.json());
-      } else {
-        setXprStatus(t("xpr_requesting_challenge") || "Requesting login challenge…");
-        const { challengeId, message } = await fetch(`${XPR_AUTH_SERVICE_URL}/api/auth/nonce`, {
-          method: "POST",
-        }).then((r) => r.json());
-        const { Serializer } = await import("@greymass/eosio");
+      const verifyWithSession = async (sess: any, lr: any, bounded: boolean): Promise<typeof verifyRes> => {
+        const actor = sess.auth.actor;
+        const permission = sess.auth.permission;
 
-        setXprStatus(t("xpr_signing") || `Connected as ${actor} — sign in your wallet (this costs nothing)…`);
-        const nonce = message.match(/Nonce: (\S+)/)?.[1];
-        const result = await session.transact(
-          {
-            actions: [
-              {
-                account: "eosio.token",
-                name: "transfer",
-                authorization: [{ actor, permission }],
-                // from===to is rejected client-side even with broadcast:false,
-                // so send to the always-present `eosio` system account. Never
-                // broadcast; nothing here ever touches the chain.
-                data: { from: actor, to: "eosio", quantity: "0.0001 XPR", memo: nonce },
-              },
-            ],
-          },
-          { broadcast: false },
-        );
-        const serializedTransaction = Serializer.encode({ object: result.transaction }).hexString;
+        const viaNonce = async (): Promise<typeof verifyRes> => {
+          setXprStatus(t("xpr_requesting_challenge") || "Preparing your sign-in…");
+          // NOTE: deliberately unchanged — no body, no Content-Type. The
+          // maintenance allowlist is enforced at /verify (which already carries
+          // `actor`), NOT here, precisely so this shared path stays untouched:
+          // a nonce is worthless without a signature, so leaving it open costs
+          // nothing. Sending a JSON body here would add a CORS preflight to
+          // every login on every network for no gain.
+          const { challengeId, message } = await fetch(`${authUrl}/api/auth/nonce`, {
+            method: "POST",
+          }).then((r) => r.json());
+          const { Serializer } = await import("@greymass/eosio");
 
-        setXprStatus(t("xpr_verifying") || "Verifying signature…");
-        verifyRes = await fetch(`${XPR_AUTH_SERVICE_URL}/api/auth/verify`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ challengeId, actor, permission, signatures: result.signatures, serializedTransaction, inviteCode: inviteCode || undefined }),
-        }).then((r) => r.json());
+          // "Confirm sign-in", never "confirm transaction": this signature is
+          // NEVER broadcast (broadcast:false), so nothing reaches the chain
+          // and nothing is spent. Calling it a transaction would imply a
+          // cost that does not exist (Gabriel 2026-07-28).
+          setXprStatus(t("xpr_signing") || `Connected as ${actor} — confirm the sign-in in your wallet. Nothing is sent to the blockchain and nothing is spent.`);
+          const nonce = message.match(/Nonce: (\S+)/)?.[1];
+          const transactPromise = sess.transact(
+            {
+              actions: [
+                {
+                  // sigillogin::login — signed only, NEVER broadcast. The
+                  // wallet shows a plain "login" action (your account + a
+                  // nonce), which is exactly what this is. Replaced the old
+                  // 0.0001 XPR transfer-with-memo 2026-07-22: a login that
+                  // asks users to "send crypto" reads as a scam even though
+                  // broadcast:false meant it never moved anything.
+                  account: net.loginContract,
+                  name: "login",
+                  authorization: [{ actor, permission }],
+                  data: { account: actor, nonce },
+                },
+              ],
+            },
+            { broadcast: false },
+          );
+          // A restored session can be stale in a way that makes transact()
+          // hang forever with zero feedback (real 2026-07-10 incident) —
+          // bound it so the catch below can recover with a fresh connect.
+          // 90s is enough to walk to your phone; a signature approved after
+          // the timeout is simply ignored (broadcast:false, nothing landed).
+          const result = bounded
+            ? await Promise.race([
+                transactPromise,
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error("Restored wallet session did not respond — reconnecting…")), 90_000),
+                ),
+              ])
+            : await transactPromise;
+          const serializedTransaction = Serializer.encode({ object: result.transaction }).hexString;
+
+          setXprStatus(t("xpr_verifying") || "Verifying signature…");
+          return await fetch(`${authUrl}/api/auth/verify`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ challengeId, actor, permission, signatures: result.signatures, serializedTransaction, inviteCode: inviteCode || undefined }),
+          }).then((r) => r.json());
+        };
+
+        if (lr?.proof) {
+          setXprStatus(t("xpr_verifying") || "Verifying…");
+          const vr = await fetch(`${authUrl}/api/auth/verify-proof`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ proof: lr.proof.toString(), inviteCode: inviteCode || undefined }),
+          }).then((r) => r.json());
+          // WebAuth mobile re-serves its cached identity proof on re-login
+          // ("already authorized this app" → same bytes), and the server
+          // burns every proof forever (anti-replay — identity-proof.ts).
+          // Fall through to the nonce path, unique per attempt.
+          if (!vr?.ok && /already used/i.test(vr?.error ?? "")) {
+            return await viaNonce();
+          }
+          return vr;
+        }
+        return await viaNonce();
+      };
+
+      try {
+        verifyRes = await verifyWithSession(session, loginResult, restoredSilently);
+      } catch (pipelineErr) {
+        if (!restoredSilently) throw pipelineErr;
+        // A CANCELLATION is not a broken session. Recovering from it would
+        // re-prompt the wallet, so declining a signature would silently start
+        // another one and the user could never actually back out — which is
+        // half of "i cancel it, then i try logging in with scan and its 2
+        // transactions again" (Gabriel 2026-07-28). Let it surface.
+        if (isWalletCancel(pipelineErr)) throw pipelineErr;
+        // The silently-restored session was stale/dead — purge the SDK's
+        // storage and redo the whole pipeline with a full fresh connect
+        // (the pre-existing, proven-safe path). Costs the old two
+        // approvals, but only in this recovery case.
+        purgeProtonSdkStorage();
+        setXprStatus(t("xpr_connecting_wallet") || "Reconnecting wallet…");
+        const fresh = await ProtonWebSDK(SDK_OPTS);
+        if (!fresh?.session) throw new Error("Wallet connection was cancelled");
+        session = fresh.session;
+        loginResult = fresh.loginResult;
+        restoredSilently = false;
+        verifyRes = await verifyWithSession(session, loginResult, false);
       }
 
-      if (!verifyRes.ok) {
-        throw new Error(verifyRes.error || "Wallet signature verification failed");
+      if (!verifyRes?.ok) {
+        throw new Error(verifyRes?.error || "Wallet signature verification failed");
       }
 
       // Cache this already-connected, already-proven-live session so the
@@ -651,12 +904,8 @@ export default function LoginPage() {
       // wallet-session-store.ts for why this is safe (in-memory only,
       // never localStorage — doesn't touch the mechanism that caused the
       // 2026-07-10 stale-session hang).
-      console.log("[wallet-session] login: caching session for actor", session?.auth?.actor?.toString(), "storeInstance=", WALLET_SESSION_STORE_INSTANCE_ID);
+      console.log("[wallet-session] login: caching session for actor", session?.auth?.actor?.toString());
       useWalletSessionStore.getState().setSession(session);
-      // TEMP DEBUG: recorded so the payment screen can show it next to its
-      // OWN instance id — if they differ, the store module got bundled
-      // twice (separate singletons). Remove once resolved.
-      try { localStorage.setItem("wallet_session_debug_login_instance", WALLET_SESSION_STORE_INSTANCE_ID); } catch { /* noop */ }
 
       // Upload the wallet's serialized channel session (fire-and-forget).
       // This is what lets the backend send NATIVE WebAuth signing prompts
@@ -667,7 +916,7 @@ export default function LoginPage() {
       try {
         const serialized = (session as any).serialize?.();
         if (serialized?.type === "channel") {
-          fetch(`${XPR_AUTH_SERVICE_URL}/api/session-channel`, {
+          fetch(`${authUrl}/api/session-channel`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${verifyRes.accessToken}` },
             body: JSON.stringify({ session: serialized }),
@@ -675,33 +924,32 @@ export default function LoginPage() {
         }
       } catch { /* non-fatal */ }
 
-      setXprStatus(t("xpr_minting_credential") || "Setting up your mailbox access…");
-      const appPasswordRes = await fetch(`${XPR_AUTH_SERVICE_URL}/api/auth/app-password`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${verifyRes.accessToken}` },
-        body: JSON.stringify({ description: "Bulwark webmail session" }),
-      }).then((r) => r.json());
+      const accessToken = verifyRes.accessToken;
+      if (!accessToken) throw new Error("Login verified but no access token was issued");
 
-      if (!appPasswordRes.username || !appPasswordRes.password) {
-        throw new Error(appPasswordRes.error || "Could not provision mailbox access");
+      // Cross-network handoff (Gabriel 2026-07-27: the "Go to testnet site" /
+      // "Go to mainnet site" interstitial had to die). Everything above
+      // already ran against the SELECTED network's own chain + auth service —
+      // the signature is real, the mailbox is provisioned, this token is
+      // valid there. What can't happen on THIS deployment is the mailbox
+      // session: its single JMAP server holds only its own network's
+      // mailboxes (see siteUrl in lib/xpr-network.ts). So instead of the old
+      // pre-login "Go to X site" detour, we pass the fresh token to the
+      // selected network's own webmail, which re-validates it and runs the
+      // identical mailbox finish there. The token rides in the URL FRAGMENT —
+      // never a query param, never hits an access log — and the receiver
+      // scrubs it from history before anything else, then proves it live via
+      // /api/auth/refresh, so a forged/expired fragment just lands back on
+      // the login form.
+      if (networkName !== DEFAULT_NETWORK) {
+        const locale = (params?.locale as string) || "en";
+        window.location.href =
+          `${net.siteUrl}/${locale}/login#sigil-xnet=` +
+          encodeURIComponent(JSON.stringify({ t: accessToken }));
+        return; // navigation in progress
       }
 
-      setXprStatus(t("xpr_signing_in") || "Signing in…");
-      const success = await login(serverUrl, appPasswordRes.username, appPasswordRes.password, undefined, true);
-      if (success) {
-        if (verifyRes.accessToken) {
-          // Account-scoped, not a single global pair — otherwise the
-          // Agent Wallets/My Mailbox page stays pinned to whichever
-          // account last completed wallet-connect instead of following
-          // the account switcher. See grants/page.tsx's matching read.
-          const scopedAccountId = generateAccountId(appPasswordRes.username, serverUrl);
-          localStorage.setItem(getAccountScopedKey("sigil_auth_token", scopedAccountId), verifyRes.accessToken);
-          localStorage.setItem(getAccountScopedKey("sigil_actor", scopedAccountId), appPasswordRes.username?.split("@")[0] ?? "");
-        }
-        router.push("/");
-      } else {
-        throw new Error("Mailbox login failed after wallet verification");
-      }
+      await finishMailboxLogin(accessToken, networkName);
     } catch (err) {
       setXprError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -732,6 +980,43 @@ export default function LoginPage() {
     }
     setDemoLoading(false);
   };
+
+  // Both networks are always offered. The testnet build used to omit mainnet
+  // entirely, because the concern was a tester on testnet.mailsigil.pro
+  // initiating a REAL mainnet login. That's safe now: the wallet login runs
+  // in-page against the SELECTED network's own chain + auth service no matter
+  // which deployment this is, and only the mailbox finish hands off to that
+  // network's own site (see handleXprLogin's cross-network handoff). Hiding
+  // the option outright also read as "this feature is gone" rather than "it
+  // lives elsewhere".
+  const availableNetworks: readonly XprNetworkName[] = ["mainnet", "testnet"] as const;
+  // Sign-in paused on the selected network. The toggle still switches to it —
+  // only login/account creation is blocked, and we point at whichever offered
+  // network is actually up so a visitor isn't left at a dead end.
+  //
+  // `?bypass=1` re-enables the button during maintenance (Gabriel 2026-07-26:
+  // "let just me be able to login on mainnet while everyone else is still
+  // showing maintenance mode"). This is PRESENTATION ONLY and intentionally
+  // not secret — the actual gate is LOGIN_MAINTENANCE_ALLOW in that network's
+  // auth service, which is keyed to an account and still needs that account's
+  // wallet signature. Anyone else who finds this param just gets the 503 the
+  // moment they try, now with the server's own message shown.
+  const maintenanceBypass = searchParams.get("bypass") === "1";
+  // `remoteMaintenance` is fetched near the top of the component — it's a hook
+  // and must run before the early returns above. See the note there.
+  const networkPaused = (remoteMaintenance ?? isNetworkInMaintenance(selectedNetwork)) && !maintenanceBypass;
+
+  // Card title follows the SELECTED network, not the deployment's baked
+  // appName (Gabriel 2026-07-28: the testnet site showed "Mail Sigil
+  // (Testnet)" on the card even with the mainnet toggle selected). The
+  // testnet marker stays whenever testnet is selected; a mainnet selection
+  // always strips it.
+  const displayAppName = selectedNetwork === "testnet"
+    ? (/\(testnet\)/i.test(appName) ? appName : `${appName} (Testnet)`)
+    : appName.replace(/\s*\((?:testnet|mainnet)\)/i, "").trim() || appName;
+  const fallbackNetwork = availableNetworks.find(
+    (n) => n !== selectedNetwork && !isNetworkInMaintenance(n),
+  );
 
   // Fallback (only reachable if `theme` somehow isn't one of the 4 known
   // values) is Sigil, not System — matches the store's own default.
@@ -891,6 +1176,54 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-background via-muted/10 to-muted/30 relative px-4">
+      {/* Network toggle - top left, segmented (mirrors the theme toggle top
+          right). Picks which network the Sign in button targets; the session
+          locks to it on login.
+          Both options always render. Picking the other network still signs in
+          right here — the wallet popup runs in-page, and only the mailbox
+          finish happens on that network's own site (see handleXprLogin's
+          cross-network handoff). A network under maintenance also stays
+          selectable and still switches — the sign-in button below is what
+          refuses. Blanking either out would look like the feature vanished. */}
+      <div className="absolute top-5 left-5">
+        <div
+          role="radiogroup"
+          aria-label="Network"
+          className="inline-flex items-center gap-0.5 rounded-xl border border-border/50 bg-background/60 p-0.5 text-sm backdrop-blur-sm"
+        >
+          {availableNetworks.map((n) => {
+            const active = selectedNetwork === n;
+            const paused = isNetworkInMaintenance(n);
+            return (
+              <button
+                key={n}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                title={paused ? `${n} sign-in is paused for maintenance` : undefined}
+                onClick={() => setSelectedNetwork(n)}
+                className={cn(
+                  "px-3 py-1.5 rounded-[10px] transition-all duration-200 capitalize",
+                  active
+                    ? n === "testnet"
+                      ? "bg-amber-500/20 text-amber-600 dark:text-amber-300 font-medium shadow-sm"
+                      : "bg-secondary text-foreground font-medium shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {n}
+                {paused && (
+                  <span
+                    className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-amber-500 align-middle"
+                    aria-hidden="true"
+                  />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Theme toggle - top right, dropdown style */}
       <div className="absolute top-5 right-5" ref={themeMenuRef} suppressHydrationWarning>
         <button
@@ -956,7 +1289,7 @@ export default function LoginPage() {
               />
             </div>
             <h1 className="text-2xl font-semibold text-foreground tracking-tight">
-              {isAddAccountMode ? t("add_account_title") : appName}
+              {isAddAccountMode ? t("add_account_title") : displayAppName}
             </h1>
             <p className="text-sm text-muted-foreground mt-1.5">
               {isAddAccountMode ? t("add_account_subtitle") : (t("title") !== appName ? t("title") : "Sign in to your account")}
@@ -1089,11 +1422,50 @@ export default function LoginPage() {
                     "always ship a manual fallback" rule, not because XPR
                     login is optional for normal users. */}
                 <div className="space-y-3">
+                  {/* Sign-in paused on this network. Shown INSTEAD of letting
+                      the button run — the auth service would 503 anyway (see
+                      LOGIN_MAINTENANCE in auth/src/server.ts), and a wallet
+                      prompt that ends in a server error is a worse experience
+                      than saying so up front. */}
+                  {networkPaused && (
+                    <div className="p-3 rounded-xl border border-warning/20 bg-warning/5 flex items-start gap-3" role="status">
+                      <div className="w-10 h-10 rounded-full bg-warning/15 text-warning flex items-center justify-center flex-shrink-0 shadow-sm">
+                        <AlertCircle className="w-5 h-5" />
+                      </div>
+                      <div className="flex-1 min-w-0 self-center">
+                        <p className="text-sm text-warning leading-relaxed">
+                          <span className="font-medium capitalize">{selectedNetwork}</span> sign-in
+                          and new accounts are paused for maintenance. Mail already in your
+                          mailbox is unaffected.
+                          {fallbackNetwork && (
+                            <>
+                              {" "}
+                              <button
+                                type="button"
+                                onClick={() => setSelectedNetwork(fallbackNetwork)}
+                                className="underline underline-offset-2 hover:no-underline font-medium capitalize"
+                              >
+                                Switch to {fallbackNetwork}
+                              </button>{" "}
+                              to sign in there.
+                            </>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  {/* Single sign-in — targets whichever network the top-left
+                      toggle selects, on EITHER network: the wallet popup runs
+                      in-page against the selected network's own chain + auth
+                      service, and only the mailbox finish hands off to that
+                      network's own site (see handleXprLogin's cross-network
+                      handoff). The session locks to the choice; switching
+                      networks = full logout. See lib/xpr-network.ts. */}
                   <Button
                     type="button"
                     className="w-full h-11 font-medium text-[15px] bg-primary hover:bg-primary/90 transition-all duration-200 rounded-xl shadow-md shadow-primary/15 hover:shadow-lg hover:shadow-primary/20"
-                    onClick={handleXprLogin}
-                    disabled={xprLoading}
+                    onClick={() => handleXprLogin(selectedNetwork)}
+                    disabled={xprLoading || networkPaused}
                   >
                     {xprLoading ? (
                       <div className="flex items-center gap-2">
@@ -1104,9 +1476,21 @@ export default function LoginPage() {
                       <div className="flex items-center gap-2">
                         <Shield className="w-4 h-4" />
                         Sign in with XPR Wallet
+                        {selectedNetwork === "testnet" && (
+                          <span className="ml-1 rounded-full bg-amber-500/25 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-100">
+                            Testnet
+                          </span>
+                        )}
                       </div>
                     )}
                   </Button>
+                  {/* NOTE (parked 2026-07-23, Gabriel): a "Use a different
+                      wallet account" link lived here — it called
+                      handleXprLogin(selectedNetwork, true) to force a fresh
+                      connect (bypassing silent restore) so someone could switch
+                      XPR accounts. Removed for now to keep the login clean; the
+                      forceFresh path in handleXprLogin is still wired, so
+                      restoring the link later is a one-line JSX add. */}
                   {xprError && (
                     <div className="p-3 rounded-xl border border-destructive/20 bg-destructive/5 flex items-start gap-3">
                       <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0" />
