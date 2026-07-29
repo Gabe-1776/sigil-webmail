@@ -229,11 +229,6 @@ export default function GrantsContent() {
   const [linked, setLinked] = useState<LinkedAccounts | null>(null);
   const [incoming, setIncoming] = useState<IncomingGrant[]>([]);
   const [issued, setIssued] = useState<IssuedGrant[]>([]);
-  // Grants torn down when a mailbox was DELETED, still inside the 30-day
-  // retention window. Deliberate revokes never appear here — the server
-  // excludes them, because re-offering access someone chose to remove would
-  // be a security hole, not a convenience.
-  const [restorable, setRestorable] = useState<{ grantId: string; granteeActor: string; scope: string; revokedAt: string }[]>([]);
   const [accepted, setAccepted] = useState<AcceptedGrant[]>([]);
   const [incomingPm, setIncomingPm] = useState<PendingMailbox[]>([]);
   const [sentPm, setSentPm] = useState<PendingMailbox[]>([]);
@@ -304,7 +299,7 @@ export default function GrantsContent() {
     if (!token) return;
     if (!background) setLoading(true);
     try {
-      const [linkedRes, incomingRes, issuedRes, acceptedRes, incomingPmRes, sentPmRes, quotaRes, leaseInfoRes, storageStatusRes, webhooksRes, restorableRes] = await Promise.all([
+      const [linkedRes, incomingRes, issuedRes, acceptedRes, incomingPmRes, sentPmRes, quotaRes, leaseInfoRes, storageStatusRes, webhooksRes] = await Promise.all([
         authFetch("/api/agentcore/linked"),
         authFetch("/api/grants/incoming"),
         authFetch("/api/grants/issued"),
@@ -315,14 +310,12 @@ export default function GrantsContent() {
         authFetch("/api/slots/leases").catch(() => null),
         authFetch("/api/storage/status").catch(() => null),
         authFetch("/api/webhooks").catch(() => null),
-        authFetch("/api/grants/restorable").catch(() => null),
       ]);
       if (linkedRes.ownedAgents) setLinked(linkedRes);
       if (quotaRes?.ok) setQuota(quotaRes);
       if (leaseInfoRes?.ok) setLeaseInfo(leaseInfoRes);
       if (storageStatusRes?.ok) setStorageStatus(storageStatusRes);
       if (webhooksRes?.ok) setWebhooks(webhooksRes.webhooks ?? []);
-      setRestorable(restorableRes?.ok ? (restorableRes.grants ?? []) : []);
       setIncoming(incomingRes.grants ?? []);
       setIssued(issuedRes.grants ?? []);
       setAccepted(acceptedRes.grants ?? []);
@@ -346,7 +339,6 @@ export default function GrantsContent() {
     setIncoming([]);
     setIssued([]);
     setAccepted([]);
-    setRestorable([]);
     setIncomingPm([]);
     setSentPm([]);
     setQuota(null);
@@ -481,28 +473,6 @@ export default function GrantsContent() {
       await loadAll();
       clearStatus(grantId);
     } catch { setStatus(grantId, "Error"); setTimeout(() => clearStatus(grantId), 3000); }
-  };
-
-  // Re-offer a grant that was torn down with a deleted mailbox. The server
-  // mints a NEW pending grant — the grantee still has to accept, and a fresh
-  // credential is issued. Nothing is silently re-provisioned.
-  const handleRestore = async (grantId: string) => {
-    setStatus(grantId, "Re-offering…");
-    try {
-      const res = await authFetch("/api/grants/restore", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ grantId }),
-      });
-      if (res.ok) {
-        await loadAll();
-        setStatus(grantId, "Re-offered — waiting for them to accept");
-      } else {
-        setStatus(grantId, res.error ?? "Could not re-offer");
-      }
-    } catch {
-      setStatus(grantId, "Could not re-offer");
-    }
   };
 
   const handleRevoke = async (grantId: string) => {
@@ -2117,48 +2087,9 @@ export default function GrantsContent() {
           <div className="max-w-xl space-y-4">
             <h1 className="text-lg font-semibold">Issued Grants</h1>
 
-            {issued.length === 0 && sentPm.length === 0 && restorable.length === 0 && !loading && (
+            {issued.length === 0 && sentPm.length === 0 && !loading && (
               <div className="rounded-lg border border-dashed border-border p-8 text-center text-muted-foreground text-sm">
                 No grants issued yet
-              </div>
-            )}
-
-            {/* Grants that were torn down when a mailbox was deleted, still
-                inside the 30-day retention window. Deliberate revokes never
-                appear here — the server filters them out, because re-offering
-                access someone chose to remove would be a security hole. */}
-            {restorable.length > 0 && (
-              <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 space-y-3">
-                <div>
-                  <p className="text-sm font-medium">Previously granted access</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    These were removed when a mailbox was deleted. You can offer them again —
-                    the agent still has to accept, and a new credential is issued.
-                  </p>
-                </div>
-                {restorable.map((g) => (
-                  <div key={g.grantId} className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium break-words flex items-center gap-1.5 flex-wrap">
-                        {g.granteeActor}
-                        <GrantScopeChip scope={g.scope} />
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Removed {new Date(g.revokedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-                        {actionStatus[g.grantId] ? ` · ${actionStatus[g.grantId]}` : ""}
-                      </p>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-xs shrink-0"
-                      onClick={() => handleRestore(g.grantId)}
-                      disabled={!!actionStatus[g.grantId]}
-                    >
-                      Offer again
-                    </Button>
-                  </div>
-                ))}
               </div>
             )}
 
