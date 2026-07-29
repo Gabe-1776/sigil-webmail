@@ -60,6 +60,13 @@ const ERROR_PATTERNS: Array<{ key: string; matches: string[] }> = [
   { key: 'cors_blocked', matches: ['CORS_ERROR'] },
   { key: 'totp_required', matches: ['TOTP_REQUIRED'] },
   { key: 'invalid_credentials', matches: ['Invalid username or password', '401', 'Unauthorized'] },
+  // 403 from the mail server is NOT a bad password — Stalwart returns it when
+  // the client IP is temporarily blocked after repeated failed sign-ins
+  // (auth-failure ban, clears itself in ~1h). Without this it fell through to
+  // 'generic', so the UI said "an unexpected error occurred" and a user had no
+  // idea their account was fine and they simply had to wait. It cost real
+  // debugging time on 2026-07-29 because the message pointed nowhere.
+  { key: 'temporarily_blocked', matches: ['403', 'Forbidden'] },
   { key: 'connection_failed', matches: ['network', 'Failed to fetch', 'NetworkError', 'ECONNREFUSED', 'Load failed', 'cancelled'] },
   { key: 'server_error', matches: ['500', '502', '503', '504', 'Internal Server Error', 'Service Unavailable'] },
 ];

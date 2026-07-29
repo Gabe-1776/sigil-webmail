@@ -709,7 +709,22 @@ export default function LoginPage() {
 
     setXprStatus(t("xpr_signing_in") || "Signing in…");
     const success = await login(serverUrl, appPasswordRes.username, appPasswordRes.password, undefined, true);
-    if (!success) throw new Error("Mailbox login failed after wallet verification");
+    if (!success) {
+      // "Mailbox login failed after wallet verification" told the user nothing:
+      // the wallet half had succeeded, so the message pointed at the wrong half
+      // of the flow and gave no idea whether to retry, wait, or re-auth. The
+      // store already classified the real cause (403 = IP temporarily blocked,
+      // 401 = credential rejected, network, …) — surface THAT instead.
+      // Gabriel hit this twice on 2026-07-29 and it cost real debugging time
+      // both times, once for a stale credential and once for an IP ban that
+      // had nothing to do with his mailbox. (2026-07-29)
+      const classified = useAuthStore.getState().error;
+      const message = classified ? t(`error.${classified}`) : "";
+      throw new Error(
+        message ||
+        "Your wallet was verified, but the mail server rejected the connection. Try again in a few minutes.",
+      );
+    }
     // Lock the session to the network this login chose — every subsequent
     // chain + auth call (grants/confirm/refresh) reads this; switching
     // networks requires a full logout.

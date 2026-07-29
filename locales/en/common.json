@@ -17,6 +17,7 @@
     "reconnecting": "Connection lost. Attempting to reconnect…",
     "error": {
       "invalid_credentials": "Invalid email or password. Please check your credentials and try again.",
+      "temporarily_blocked": "Too many failed sign-in attempts from your network, so the mail server has paused new connections. Your account is fine. Wait about an hour and try again, or switch networks.",
       "connection_failed": "Unable to reach the server. Check your internet connection and try again.",
       "cors_blocked": "The server is reachable but is blocking cross-origin requests. Check your JMAP server's CORS settings and allow this domain.",
       "server_error": "The server is temporarily unavailable. Please try again later.",
