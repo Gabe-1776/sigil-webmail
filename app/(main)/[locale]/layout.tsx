@@ -9,6 +9,8 @@ import { ProtocolLaunchHandlerProvider } from "@/components/protocol/protocol-la
 import { ProInterfaceRedirect } from "@/components/pro/pro-interface-redirect";
 import { PluginDialogHost } from "@/components/plugins/plugin-dialog-host";
 import { PluginConsentDialog } from "@/components/plugins/plugin-consent-dialog";
+import { SigilTokenRefreshProvider } from "@/components/providers/sigil-token-refresh-provider";
+import { NetworkBadge } from "@/components/layout/network-badge";
 import { locales } from "@/i18n/routing";
 
 export default async function LocaleLayout({
@@ -38,6 +40,8 @@ export default async function LocaleLayout({
               <TourProvider>
                 <ProtocolLaunchHandlerProvider>
                   <ProInterfaceRedirect />
+                  <SigilTokenRefreshProvider />
+                  <NetworkBadge />
                   {children}
                   <PluginDialogHost />
                   <PluginConsentDialog />

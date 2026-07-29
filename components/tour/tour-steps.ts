@@ -42,37 +42,23 @@ export const BASE_TOUR_STEPS: TourStep[] = [
     descriptionKey: "tour.email_list_desc",
     placement: "right",
   },
-  {
-    id: "email-viewer",
-    target: '[data-tour="email-viewer"]',
-    titleKey: "tour.email_viewer_title",
-    descriptionKey: "tour.email_viewer_desc",
-    placement: "left",
-    beforeAction: () => {
-      // Click the "Welcome to Bulwark Mail!" email (or the first email) to open the viewer
-      const emailList = document.querySelector('[data-tour="email-list"]');
-      if (!emailList) return;
-      // Try to find the welcome email by subject text
-      const items = emailList.querySelectorAll('.cursor-pointer');
-      let target: HTMLElement | null = null;
-      for (const item of items) {
-        if (item.textContent?.includes("Welcome to Bulwark Mail")) {
-          target = item as HTMLElement;
-          break;
-        }
-      }
-      // Fallback to first email if welcome email not found
-      if (!target) target = emailList.querySelector('.cursor-pointer') as HTMLElement | null;
-      if (target) target.click();
-    },
-  },
-  {
-    id: "keywords",
-    target: '[data-tour="keyword-tags"]',
-    titleKey: "tour.keywords_title",
-    descriptionKey: "tour.keywords_desc",
-    placement: "right",
-  },
+  // REMOVED 2026-07-25: "email-viewer" and "keywords".
+  //
+  // Both were impossible to satisfy on a freshly created Sigil account and
+  // broke the tour for every new tester. "email-viewer" ran a beforeAction
+  // that clicked the "Welcome to Bulwark Mail" demo email (or any first row)
+  // to force the viewer open — a brand-new mailbox has no mail, so nothing
+  // was clicked and [data-tour="email-viewer"] never appeared. "keywords"
+  // targeted [data-tour="keyword-tags"], which sidebar.tsx only renders when
+  // emailKeywords.length > 0 — also never true on a new account.
+  //
+  // A missing target costs the 5-second poll in tour-overlay.tsx before the
+  // step is auto-skipped, so the two of them put ~10 seconds of dimmed screen
+  // with no tooltip in front of every new user, who reasonably read it as
+  // frozen and clicked the overlay (which ends the tour). They were also the
+  // only two steps that reached into the user's actual mail to stage
+  // themselves. Onboarding for an empty mailbox is the welcome email's job
+  // now (auth/src/welcome-email.ts), not a tour step's.
   {
     id: "nav-calendar",
     target: '[data-tour="nav-calendar"]',
@@ -200,12 +186,41 @@ export const DEMO_TOUR_STEPS: TourStep[] = [
 export function getTourSteps(options: {
   isDemoMode: boolean;
   supportsCalendar: boolean;
+  supportsContacts: boolean;
   supportsWebDAV: boolean;
+  /** Below `lg` the app renders the horizontal bottom bar instead of the
+   *  vertical rail (`isMobile || isTablet` in page.tsx). Different chrome =
+   *  different available targets. */
+  isCompactNav: boolean;
 }): TourStep[] {
   let steps = [...BASE_TOUR_STEPS];
 
+  // Steps with no counterpart in the compact layout (2026-07-28). Both existed
+  // in the DOM or not at all in ways that broke the tour on a phone:
+  //
+  // - "sidebar" is an off-canvas drawer there. querySelector FINDS it, so the
+  //   overlay happily shows a spotlight — at x=-288, entirely off screen.
+  //   Worse than skipping it: the user sees a dimmed page and no tooltip.
+  // - "shortcuts" targets the keyboard-shortcuts button, which the horizontal
+  //   bar deliberately doesn't render. Keyboard shortcuts on a phone aren't a
+  //   thing, so this is correct chrome — the tour just has to agree.
+  //
+  // The remaining nav steps DO work now: the horizontal bar carries the same
+  // data-tour ids as the vertical rail (see navigation-rail.tsx).
+  if (options.isCompactNav) {
+    steps = steps.filter((s) => s.id !== "sidebar" && s.id !== "shortcuts");
+  }
+
+  // A step whose feature is switched off has no nav icon to point at, and a
+  // step with no target burns the overlay's 5-second poll before skipping
+  // itself. Every conditional nav step must be filtered here on the SAME
+  // condition navigation-rail.tsx uses to hide the icon.
   if (!options.supportsCalendar) {
     steps = steps.filter((s) => s.id !== "nav-calendar");
+  }
+
+  if (!options.supportsContacts) {
+    steps = steps.filter((s) => s.id !== "nav-contacts");
   }
 
   if (options.isDemoMode) {

@@ -23,8 +23,16 @@ purpose-built for programmatic access. The full agent integration guide is at:
 
 1. Open webmail.mailsigil.pro.
 2. Click "Sign in with XPR Wallet" — opens WebAuth (webauth.com) popup.
-3. Approve the one-tap authorization in WebAuth.
-4. Your mailbox at <yourname>@mailsigil.pro is auto-provisioned and ready.
+3. Approve the account authorization in WebAuth.
+4. Confirm the sign-in. This is a `sigillogin::login` action carrying a
+   server-issued nonce; it is SIGNED BUT NEVER BROADCAST, so nothing reaches
+   the chain and nothing is spent. It is required because the WebAuth
+   browser popup returns only an asserted account name and no signature —
+   this is the only proof you control the account, and a Sigil session
+   unlocks private mail. Wallets that DO return an identity proof (Proton
+   mobile / Anchor) skip this step; a repeat sign-in in the same browser
+   usually does too, via silent session restore.
+5. Your mailbox at <yourname>@mailsigil.pro is auto-provisioned and ready.
 
 No password. No signup form. Your XPR wallet key is your credential.
 
@@ -51,8 +59,10 @@ receives a link like:
   webmail.mailsigil.pro/confirm?pending=<id>
 
 Opening it shows a preview of what will be created and who initiated it.
-The human signs with their wallet to approve. One tap in WebAuth is all
-that is required.
+The human signs with their wallet to approve. Same shape as sign-in above:
+an authorization, then a signature — and on this page the approval itself
+(`mailsigil::approve`) IS broadcast on chain, because consent has to be
+publicly auditable.
 
 ## Full technical reference
 

@@ -17,6 +17,26 @@ ENV NEXT_PUBLIC_DEFAULT_LOCALE=$NEXT_PUBLIC_DEFAULT_LOCALE
 # `git rev-parse` inside the build can't find it - CI must pass it in.
 ARG GIT_COMMIT=unknown
 ENV GIT_COMMIT=$GIT_COMMIT
+# Per-deployment default XPR network (baked into the client bundle). The testnet
+# stack passes "testnet" so its site defaults to testnet; mainnet leaves it empty
+# and defaults to mainnet. See lib/xpr-network.ts.
+ARG NEXT_PUBLIC_DEFAULT_NETWORK=
+ENV NEXT_PUBLIC_DEFAULT_NETWORK=$NEXT_PUBLIC_DEFAULT_NETWORK
+# Per-network XPR auth-service base URLs (baked into the client bundle).
+# lib/xpr-network.ts already has correct hardcoded per-network fallbacks
+# (auth.mailsigil.pro / testnet-auth.mailsigil.pro) used when these are left
+# unset, so omitting them preserves today's behavior exactly on both builds;
+# set explicitly here so ops can repoint an auth backend without a code change.
+ARG NEXT_PUBLIC_XPR_AUTH_URL_MAINNET=
+ENV NEXT_PUBLIC_XPR_AUTH_URL_MAINNET=$NEXT_PUBLIC_XPR_AUTH_URL_MAINNET
+ARG NEXT_PUBLIC_XPR_AUTH_URL_TESTNET=
+ENV NEXT_PUBLIC_XPR_AUTH_URL_TESTNET=$NEXT_PUBLIC_XPR_AUTH_URL_TESTNET
+# Comma-separated networks whose sign-in is paused (e.g. "mainnet"). The toggle
+# still offers and switches to them; only login/account creation is blocked.
+# Must match LOGIN_MAINTENANCE on that network's auth service — this arg is the
+# UI half, the auth service is what actually enforces it.
+ARG NEXT_PUBLIC_MAINTENANCE_NETWORKS=
+ENV NEXT_PUBLIC_MAINTENANCE_NETWORKS=$NEXT_PUBLIC_MAINTENANCE_NETWORKS
 RUN npx next build --webpack
 
 FROM node:24-alpine AS runner

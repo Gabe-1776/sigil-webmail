@@ -5,13 +5,16 @@ import { useSearchParams } from "next/navigation";
 import { useRouter } from "@/i18n/navigation";
 import { useAuthStore } from "@/stores/auth-store";
 import { generateAccountId, getAccountScopedKey } from "@/lib/account-utils";
+import { getNetwork, getSessionNetwork } from "@/lib/xpr-network";
 import { Button } from "@/components/ui/button";
 import { Loader2, Mail, CheckCircle, AlertCircle, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { purgeProtonSdkStorage, isWalletCancel } from "@/lib/proton-session";
 
-const AUTH_URL = process.env.NEXT_PUBLIC_XPR_AUTH_SERVICE_URL || "https://auth.mailsigil.pro";
-const XPR_CHAIN_ID = "384da888112027f0321850a169f737c33e53b388aad48b5adace4bab97f437e0";
-const XPR_ENDPOINTS = ["https://proton.eosusa.io", "https://proton.protonuk.io"];
+// Network is chosen from the confirm link's ?network= (the request lives in
+// that network's separate auth backend), falling back to the session network
+// then mainnet. All chain/auth values derive from it — no hardcoded chain.
+// See lib/xpr-network.ts + BLUEPRINT-testnet-mainnet-parity.md.
 
 type PendingInfo = {
   pendingId: string;
@@ -43,6 +46,9 @@ function isMobileDevice() {
 export default function ConfirmPage() {
   const searchParams = useSearchParams();
   const pendingId = searchParams.get("pending") ?? "";
+  const networkParam = searchParams.get("network");
+  const net = networkParam ? getNetwork(networkParam) : getSessionNetwork();
+  const AUTH_URL = net.authUrl;
   const router = useRouter();
   const login = useAuthStore((s) => s.login);
   const serverUrl = useAuthStore((s) => s.serverUrl);
@@ -87,45 +93,71 @@ export default function ConfirmPage() {
       // 'proton'/'anchor' are labeled "Mobile"/"Desktop" by the SDK's own
       // selector, which reads as generic device choices but are actually
       // two different wallet apps Sigil never documents or supports.
-      const { session, loginResult } = await ProtonWebSDK({
-        linkOptions: { chainId: XPR_CHAIN_ID, endpoints: XPR_ENDPOINTS },
-        transportOptions: { requestAccount: "mailsigil" },
-        selectorOptions: { appName: "Sigil Mail", enabledWalletTypes: ["webauth", "anchor", "proton"] },
-      });
+      const SDK_OPTS = {
+        linkOptions: { chainId: net.chainId, endpoints: net.endpoints },
+        transportOptions: { requestAccount: net.mailContract },
+        selectorOptions: { appName: "Sigil Mail", enabledWalletTypes: ["webauth", "anchor", "proton"] as any },
+      };
+
+      // Silent session restore first — one wallet approval (the signature)
+      // instead of connect + sign. Same rationale + stale-session guard as
+      // login/page.tsx's handleXprLogin (2026-07-23).
+      let session: any = null;
+      let loginResult: any = null;
+      let restoredSilently = false;
+      try {
+        const restored = await ProtonWebSDK({
+          ...SDK_OPTS,
+          linkOptions: { ...SDK_OPTS.linkOptions, restoreSession: true },
+        });
+        if (restored?.session) {
+          session = restored.session;
+          restoredSilently = true;
+        }
+      } catch { /* nothing restorable */ }
+      if (!session) {
+        const fresh = await ProtonWebSDK(SDK_OPTS);
+        session = fresh?.session;
+        loginResult = fresh?.loginResult;
+      }
       if (!session) throw new Error("Wallet connection was cancelled");
 
-      const actor = session.auth.actor.toString();
-      const permission = session.auth.permission.toString();
+      let actor = session.auth.actor.toString();
+      let permission = session.auth.permission.toString();
 
       // Verify login proof → get access token (no mailbox provisioned yet)
-      let accessToken: string;
-      if (loginResult?.proof) {
-        setStage({ type: "signing", actor });
-        const res = await fetch(`${AUTH_URL}/api/auth/verify-proof`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ proof: loginResult.proof.toString() }),
-        }).then((r) => r.json());
-        if (!res.ok) throw new Error(res.error || "Identity verification failed");
-        accessToken = res.accessToken;
-      } else {
-        setStage({ type: "signing", actor });
+      // Assigned inside runVerify (a closure), so give it a definite value
+      // TS can see; the !accessToken guard after the pipeline is the check.
+      let accessToken = "";
+      const verifyViaNonce = async (): Promise<string> => {
         const { challengeId, message } = await fetch(`${AUTH_URL}/api/auth/nonce`, {
           method: "POST",
         }).then((r) => r.json());
         const { Serializer } = await import("@greymass/eosio");
         const nonce = message.match(/Nonce: (\S+)/)?.[1];
-        const result = await session.transact(
+        const transactPromise = session.transact(
           {
             actions: [{
-              account: "eosio.token",
-              name: "transfer",
+              // Signed only, never broadcast — a plain "login" action in the
+              // wallet instead of a scary transfer. See login/page.tsx.
+              account: net.loginContract,
+              name: "login",
               authorization: [{ actor, permission }],
-              data: { from: actor, to: "eosio", quantity: "0.0001 XPR", memo: nonce },
+              data: { account: actor, nonce },
             }],
           },
           { broadcast: false },
         );
+        // Bound the wait when running on a silently-restored session — a
+        // stale one can hang transact() forever (2026-07-10 incident).
+        const result = restoredSilently
+          ? await Promise.race([
+              transactPromise,
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("Restored wallet session did not respond — reconnecting…")), 90_000),
+              ),
+            ])
+          : await transactPromise;
         const serializedTransaction = Serializer.encode({ object: result.transaction }).hexString;
         const res = await fetch(`${AUTH_URL}/api/auth/verify`, {
           method: "POST",
@@ -133,8 +165,55 @@ export default function ConfirmPage() {
           body: JSON.stringify({ challengeId, actor, permission, signatures: result.signatures, serializedTransaction }),
         }).then((r) => r.json());
         if (!res.ok) throw new Error(res.error || "Signature verification failed");
-        accessToken = res.accessToken;
+        return res.accessToken;
+      };
+      const runVerify = async () => {
+        if (loginResult?.proof) {
+          setStage({ type: "signing", actor });
+          const res = await fetch(`${AUTH_URL}/api/auth/verify-proof`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ proof: loginResult.proof.toString() }),
+          }).then((r) => r.json());
+          if (!res.ok && /already used/i.test(res.error ?? "")) {
+            // WebAuth mobile re-serves its cached identity proof, which the
+            // server has already burned (anti-replay) — fall through to the
+            // always-unique nonce path. Same fix as login/page.tsx 2026-07-22.
+            accessToken = await verifyViaNonce();
+          } else if (!res.ok) {
+            throw new Error(res.error || "Identity verification failed");
+          } else {
+            accessToken = res.accessToken;
+          }
+        } else {
+          setStage({ type: "signing", actor });
+          accessToken = await verifyViaNonce();
+        }
+      };
+
+      try {
+        await runVerify();
+      } catch (pipelineErr) {
+        if (!restoredSilently) throw pipelineErr;
+        // Cancelling is a decision, not a dead session — retrying it just
+        // re-prompts the wallet and the user can't back out. Same guard as
+        // login/page.tsx (2026-07-28).
+        if (isWalletCancel(pipelineErr)) throw pipelineErr;
+        // The silently-restored session was stale/dead — purge the SDK's
+        // stored link state and redo with a full fresh connect (proven-safe
+        // path), once. Same recovery as login/page.tsx.
+        purgeProtonSdkStorage();
+        setStage({ type: "connecting" });
+        const fresh = await ProtonWebSDK(SDK_OPTS);
+        if (!fresh?.session) throw new Error("Wallet connection was cancelled");
+        session = fresh.session;
+        loginResult = fresh.loginResult;
+        actor = session.auth.actor.toString();
+        permission = session.auth.permission.toString();
+        restoredSilently = false;
+        await runVerify();
       }
+      if (!accessToken) throw new Error("Identity verification failed");
 
       // Upload the wallet's serialized channel session (fire-and-forget) so
       // future approvals can arrive as native WebAuth prompts — see login page.

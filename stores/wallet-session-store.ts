@@ -44,23 +44,16 @@ function createWalletSessionStore() {
 // evaluation its own closure-scoped store that doesn't share state with the
 // other. A bare module-level singleton doesn't survive that.
 //
-// Fix: anchor both the store and its debug instance id on `globalThis`.
-// globalThis is one shared object across every chunk in the same JS realm
-// (tab) no matter how many times the module itself re-runs, so the first
-// evaluation wins and every later evaluation just reuses it — same pattern
-// Next.js recommends for a Prisma Client singleton surviving HMR.
-//
-// Keep the instance-id comparison on screen until Gabriel confirms a repeat
-// purchase actually goes down to one signature; remove the debug scaffolding
-// (this id, the visible debug line in grants-content.tsx) once resolved.
+// Fix: anchor the store on `globalThis`. globalThis is one shared object
+// across every chunk in the same JS realm (tab) no matter how many times the
+// module itself re-runs, so the first evaluation wins and every later
+// evaluation just reuses it — same pattern Next.js recommends for a Prisma
+// Client singleton surviving HMR. (The debug instance-id scaffolding that
+// proved this diagnosis was removed 2026-07-21 after Gabriel confirmed the
+// deployed fix behaves; the fix itself is this globalThis anchor.)
 declare global {
   var __sigilWalletSessionStore: ReturnType<typeof createWalletSessionStore> | undefined;
-  var __sigilWalletSessionStoreInstanceId: string | undefined;
 }
 
 export const useWalletSessionStore =
   globalThis.__sigilWalletSessionStore ?? (globalThis.__sigilWalletSessionStore = createWalletSessionStore());
-
-export const WALLET_SESSION_STORE_INSTANCE_ID =
-  globalThis.__sigilWalletSessionStoreInstanceId ??
-  (globalThis.__sigilWalletSessionStoreInstanceId = Math.random().toString(36).slice(2, 8));

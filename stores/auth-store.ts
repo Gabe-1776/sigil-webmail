@@ -13,6 +13,8 @@ import { useAccountStore } from './account-store';
 import { fetchConfig } from '@/hooks/use-config';
 import { debug } from '@/lib/debug';
 import { generateAccountId, getAccountScopedKey } from '@/lib/account-utils';
+import { clearSessionNetwork } from '@/lib/xpr-network';
+import { purgeProtonSdkStorage } from '@/lib/proton-session';
 import { replaceWindowLocation, getPathPrefix, getLocaleFromPath, apiFetch } from '@/lib/browser-navigation';
 import { notifyParent } from '@/lib/iframe-bridge';
 import { snapshotAccount, restoreAccount, clearAllStores, evictAccount, evictAll } from '@/lib/account-state-manager';
@@ -38,7 +40,7 @@ interface AuthState {
   activeAccountId: string | null;
   isDemoMode: boolean;
 
-  login: (serverUrl: string, username: string, password: string, totp?: string, rememberMe?: boolean) => Promise<boolean>;
+  login: (serverUrl: string, username: string, password: string, totp?: string, rememberMe?: boolean, isAgent?: boolean) => Promise<boolean>;
   loginWithOAuth: (serverUrl: string, code: string, codeVerifier: string, redirectUri: string, serverId?: string) => Promise<boolean>;
   loginWithServerSso: (code: string, state: string) => Promise<boolean>;
   loginDemo: () => Promise<boolean>;
@@ -355,10 +357,31 @@ function performFullLogout(set: (state: Partial<AuthState>) => void): void {
   // doesn't re-write stale values.
   try { localStorage.removeItem('auth-storage'); } catch { /* noop */ }
   try { localStorage.removeItem('account-storage'); } catch { /* noop */ }
-  // Sweep every account-scoped sigil session too (sigil_auth_token::<id>,
-  // sigil_actor::<id> — see lib/account-utils.ts's getAccountScopedKey),
-  // plus the old flat keys pre-dating account-scoping, for anyone with a
-  // session from before this shipped.
+  // Sweep sigil wallet sessions too: logging out means the next login MUST
+  // go through a fresh wallet signature — session creation is always
+  // signature-gated, SimpleDex-style (Gabriel 2026-07-22; the one-click
+  // "Continue as" resume built that day was deliberately parked as a
+  // convenience-vs-security tradeoff — see BLUEPRINT-continue-as-login.md
+  // to revive it).
+  sweepSigilSessions();
+  // …and the WALLET session the SDK itself persists. Without this the rule
+  // above was only half-true: the login page's silent restore would pick the
+  // old Proton session back up, so signing out and back in skipped the wallet
+  // picker entirely and pushed a signature request at the user unprompted
+  // (Gabriel 2026-07-28: "i log out and try logging in and it pushes a
+  // transaction nonce"). An explicit logout means a clean slate.
+  purgeProtonSdkStorage();
+  // Drop the session-global network selection — the next login re-picks it
+  // (Sign in · Mainnet/Testnet). See lib/xpr-network.ts.
+  clearSessionNetwork();
+}
+
+/**
+ * Removes every stored sigil wallet session (sigil_auth_token::<id>,
+ * sigil_actor::<id> — see lib/account-utils.ts's getAccountScopedKey),
+ * plus the old flat keys pre-dating account-scoping.
+ */
+function sweepSigilSessions(): void {
   try {
     for (const key of Object.keys(localStorage)) {
       if (key === 'sigil_auth_token' || key === 'sigil_actor' || key.startsWith('sigil_auth_token::') || key.startsWith('sigil_actor::')) {
@@ -389,7 +412,7 @@ export const useAuthStore = create<AuthState>()(
       activeAccountId: null,
       isDemoMode: false,
 
-      login: async (serverUrl, username, password, totp, rememberMe) => {
+      login: async (serverUrl, username, password, totp, rememberMe, isAgent) => {
         const effectivePassword = totp ? `${password}$${totp}` : password;
         set({ isLoading: true, error: null, isRateLimited: false, rateLimitUntil: null });
 
@@ -501,6 +524,7 @@ export const useAuthStore = create<AuthState>()(
             isConnected: true,
             hasError: false,
             isDefault: accountStore.accounts.length === 0,
+            isAgent: !!isAgent,
           });
           // The session/token cookie was written to `cookieSlot` above. Force
           // the stored value to match: addAccount recomputes its own slot via
@@ -1009,6 +1033,8 @@ export const useAuthStore = create<AuthState>()(
           accountStore.removeAccount(accountId);
           // This account's own sigil session (grants/storage auth) — other
           // accounts' scoped tokens are untouched, only this one is gone.
+          // Deliberate: re-login always requires a fresh wallet signature
+          // (see BLUEPRINT-continue-as-login.md for the parked alternative).
           try {
             localStorage.removeItem(getAccountScopedKey('sigil_auth_token', accountId));
             localStorage.removeItem(getAccountScopedKey('sigil_actor', accountId));

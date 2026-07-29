@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Check, Plus, LogOut, Star, ChevronDown, AlertCircle } from "lucide-react";
+import { Check, Plus, LogOut, Star, ChevronDown, AlertCircle, Bot } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useAccountStore, type AccountEntry } from "@/stores/account-store";
 import { useAuthStore } from "@/stores/auth-store";
@@ -141,7 +141,18 @@ export function AccountSwitcher({ variant = "rail", className }: AccountSwitcher
             {variant === "expanded" && (
               <>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-foreground truncate">{displayName}</p>
+                  <div className="flex items-center gap-1">
+                    <p className="text-sm font-medium text-foreground truncate">{displayName}</p>
+                    {activeAccount?.isAgent && (
+                      <span
+                        title="This is an AI agent's mailbox, not your own"
+                        className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1 py-0.5 rounded-full bg-violet-500/15 text-violet-600 dark:text-violet-400 flex-shrink-0"
+                      >
+                        <Bot className="w-2.5 h-2.5" />
+                        Agent
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-muted-foreground truncate">{displayEmail}</p>
                 </div>
                 <ChevronDown className={cn("w-3.5 h-3.5 text-muted-foreground flex-shrink-0 transition-transform", open && "rotate-180")} />
@@ -195,6 +206,15 @@ export function AccountSwitcher({ variant = "rail", className }: AccountSwitcher
                       </span>
                       {account.isDefault && (
                         <Star className="w-3 h-3 text-amber-500 flex-shrink-0 fill-amber-500" />
+                      )}
+                      {account.isAgent && (
+                        <span
+                          title="This is an AI agent's mailbox, not your own"
+                          className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1 py-0.5 rounded-full bg-violet-500/15 text-violet-600 dark:text-violet-400 flex-shrink-0"
+                        >
+                          <Bot className="w-2.5 h-2.5" />
+                          Agent
+                        </span>
                       )}
                     </div>
                     <p className="text-xs text-muted-foreground truncate">

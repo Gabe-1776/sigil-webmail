@@ -30,6 +30,14 @@ export interface AccountEntry {
   errorMessage?: string;
   /** Whether this is the default account (loaded on app start) */
   isDefault: boolean;
+  /** Whether this account is an AI agent's mailbox rather than the human's
+   *  own — set when the account was added via an agent-specific path
+   *  (grants-content.tsx: openAgentInWebmail / claim-agent-mailbox). Not
+   *  retroactive: accounts added before this field existed, or added via
+   *  the ambiguous accept-a-grant flow (which can be another human, not
+   *  necessarily an agent), are left undefined/false. Purely a UI hint for
+   *  the account switcher — carries no access-control meaning. */
+  isAgent?: boolean;
 }
 
 interface AccountState {
@@ -74,6 +82,11 @@ export const useAccountStore = create<AccountState>()(
                     errorMessage: undefined,
                     lastLoginAt: entry.lastLoginAt,
                     authMode: entry.authMode,
+                    // Only ever promote to true, never demote — a caller that
+                    // doesn't know this is an agent account (e.g. a plain
+                    // re-login) shouldn't erase a flag an earlier agent-aware
+                    // call site already set.
+                    isAgent: entry.isAgent || a.isAgent,
                   }
                 : a
             ),
@@ -96,6 +109,7 @@ export const useAccountStore = create<AccountState>()(
           cookieSlot,
           avatarColor,
           isDefault,
+          isAgent: !!entry.isAgent,
         };
 
         set((s) => ({

@@ -334,6 +334,11 @@ export function NavigationRail({
               key={item.id}
               href={item.href}
               onClick={handleNavClick(item.id as 'mail' | 'calendar' | 'contacts' | 'files' | 'settings')}
+              // Must match the vertical rail's attribute: below `lg` this bar
+              // IS the navigation, and the onboarding tour points at these ids.
+              // Without it every nav step polled 5s and self-skipped, which is
+              // what "the tour dies after step 4" meant on a phone (2026-07-28).
+              data-tour={`nav-${item.id}`}
               className={cn(
                 "flex flex-col items-center justify-center gap-1 py-2 px-1 min-h-[44px] grow shrink-0 basis-[64px]",
                 "transition-colors duration-150",
@@ -424,6 +429,7 @@ export function NavigationRail({
         <Link
           href="/settings"
           onClick={handleNavClick('settings')}
+          data-tour="nav-settings"
           className={cn(
             "flex flex-col items-center justify-center gap-1 py-2 px-1 min-h-[44px] grow shrink-0 basis-[64px]",
             "transition-colors duration-150",

@@ -4,14 +4,23 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useAuthStore } from "@/stores/auth-store";
 import { useAccountStore } from "@/stores/account-store";
-import { useWalletSessionStore, WALLET_SESSION_STORE_INSTANCE_ID } from "@/stores/wallet-session-store";
+import { useWalletSessionStore } from "@/stores/wallet-session-store";
 import { generateAccountId, getAccountScopedKey } from "@/lib/account-utils";
+import { getSessionNetwork } from "@/lib/xpr-network";
 import { useConfig } from "@/hooks/use-config";
-import { ShieldCheck, Mail, Loader2, RefreshCw, Check, X, AlertCircle, Webhook } from "lucide-react";
+import { ShieldCheck, Mail, Loader2, RefreshCw, Check, X, AlertCircle, Webhook, Inbox, Share2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-
-const AUTH_URL = process.env.NEXT_PUBLIC_XPR_AUTH_SERVICE_URL || "https://auth.mailsigil.pro";
+import {
+  GrantScopeChip,
+  GrantHolderBadge,
+  GrantScopePicker,
+  getHolderKind,
+  type KnownScope,
+} from "@/components/grants/grant-scope";
+import { OpenSharedMailboxButton } from "@/components/grants/open-shared-mailbox-button";
+import { SendGrantCompose } from "@/components/grants/send-grant-compose";
+import { purgeProtonSdkStorage } from "@/lib/proton-session";
 
 // Shapes matching the actual API responses
 type IncomingGrant = {
@@ -39,6 +48,12 @@ type AcceptedGrant = {
   jmapUrl: string;
   scope: string;
   acceptedAt: string | null;
+  // FLAG #6 (2026-07-20): 'full' still gets a real issued app-password
+  // ("shared-app-password"); 'read'/'send' are pure Stalwart-native ACL
+  // shares — the grantee reaches the mailbox via their OWN login, addressed
+  // by sharedAccountId, and no separate credential is ever minted.
+  accessModel?: "shared-app-password" | "stalwart-native-acl";
+  sharedAccountId?: string;
 };
 
 type PendingMailbox = {
@@ -196,6 +211,10 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export default function GrantsContent() {
+  // Grants operate within a logged-in session — use that session's network
+  // (chosen at login) for chain + wallet contract + auth backend. Declared
+  // first so the api() helper below closes over it.
+  const net = getSessionNetwork();
   const router = useRouter();
   const login = useAuthStore((s) => s.login);
   const switchAccount = useAuthStore((s) => s.switchAccount);
@@ -215,6 +234,12 @@ export default function GrantsContent() {
   const [sentPm, setSentPm] = useState<PendingMailbox[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionStatus, setActionStatus] = useState<Record<string, string>>({});
+  // Scope picker state for the "offer access" flow, keyed by the actor being
+  // offered to. Defaults to "full" so a row nobody touches sends byte-for-
+  // byte the same request webmail always sent before this picker existed —
+  // it's what makes read/send-scoped grants reachable from webmail at all,
+  // not a behavior change for anyone who ignores it.
+  const [offerScope, setOfferScope] = useState<Record<string, KnownScope>>({});
   const [activeSection, setActiveSection] = useState<Section>("inbox");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
@@ -229,11 +254,6 @@ export default function GrantsContent() {
   // per-agent state machines here.
   const [payFlow, setPayFlow] = useState<PayFlow | null>(null);
   const [signing, setSigning] = useState(false);
-  // TEMP DEBUG (remove once the reused-session report is resolved): shows
-  // directly on the Pay button whether a cached session was actually
-  // reused, since getting console output from a live test has been slow
-  // going back and forth.
-  const [signingDebug, setSigningDebug] = useState<string | null>(null);
   const [releaseFlow, setReleaseFlow] = useState<{ leaseId: string; phase: "confirm" | "releasing" | "error"; error: string } | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [removingAgent, setRemovingAgent] = useState<string | null>(null);
@@ -260,7 +280,7 @@ export default function GrantsContent() {
 
   const authFetch = useCallback(async (path: string, opts?: RequestInit) => {
     if (!token) throw new Error("Not authenticated");
-    const res = await fetch(`${AUTH_URL}${path}`, {
+    const res = await fetch(`${net.authUrl}${path}`, {
       ...opts,
       headers: { ...opts?.headers, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     });
@@ -380,10 +400,15 @@ export default function GrantsContent() {
   const clearStatus = (id: string) =>
     setActionStatus((s) => { const next = { ...s }; delete next[id]; return next; });
 
-  const addGrantedAccount = async (username: string, password: string): Promise<boolean> => {
+  // isAgent: true ONLY for the genuinely-unambiguous agent paths (this actor's
+  // own linked agent mailbox — openAgentInWebmail / claim-agent-mailbox).
+  // Left false/default for the accept-a-grant paths below, since the grantor
+  // there could be another human, not necessarily an agent — see the isAgent
+  // doc comment on AccountEntry in stores/account-store.ts.
+  const addGrantedAccount = async (username: string, password: string, isAgent = false): Promise<boolean> => {
     if (!jmapServerUrl) return false;
     try {
-      return await login(jmapServerUrl, username, password, undefined, true);
+      return await login(jmapServerUrl, username, password, undefined, true, isAgent);
     } catch {
       return false;
     }
@@ -400,13 +425,18 @@ export default function GrantsContent() {
     try {
       const username = `${agentActor}@mailsigil.pro`;
       if (jmapServerUrl && hasAccount(username, jmapServerUrl)) {
-        await switchAccount(generateAccountId(username, jmapServerUrl));
+        const accountId = generateAccountId(username, jmapServerUrl);
+        // Backfills the isAgent flag for an account added before this field
+        // existed (or via an older path that didn't set it) — this call site
+        // is unambiguously an agent mailbox, so it's safe to correct here.
+        useAccountStore.getState().updateAccount(accountId, { isAgent: true });
+        await switchAccount(accountId);
         clearStatus(key);
         router.push("/");
         return;
       }
       const cred = await claimAgentMailbox(agentActor);
-      const added = await addGrantedAccount(cred.username, cred.password);
+      const added = await addGrantedAccount(cred.username, cred.password, true);
       if (!added) throw new Error("mailbox is ready, but adding it to your account switcher failed — try again");
       clearStatus(key);
       router.push("/");
@@ -460,8 +490,8 @@ export default function GrantsContent() {
   //    check server-side — this is UI convenience, not the enforcement
   //    boundary.
   const [claimedCreds, setClaimedCreds] = useState<Record<string, { username: string; password: string }>>({});
-  const XPR_CHAIN_ID = "384da888112027f0321850a169f737c33e53b388aad48b5adace4bab97f437e0";
-  const XPR_ENDPOINTS = ["https://proton.eosusa.io", "https://proton.protonuk.io"];
+  const XPR_CHAIN_ID = net.chainId;
+  const XPR_ENDPOINTS = net.endpoints;
 
   const claimAgentMailbox = async (agentActor: string): Promise<{ username: string; password: string }> => {
     const res = await authFetch("/api/grants/claim-agent-mailbox", {
@@ -482,7 +512,7 @@ export default function GrantsContent() {
     setActionStatus((s) => ({ ...s, [key]: "Provisioning…" }));
     try {
       const cred = await claimAgentMailbox(agentActor);
-      await addGrantedAccount(cred.username, cred.password);
+      await addGrantedAccount(cred.username, cred.password, true);
       setActionStatus((s) => ({ ...s, [key]: "Done" }));
       loadAll(true); // refresh quota + linked list so the row moves to "has mailbox"
     } catch (err: any) {
@@ -513,20 +543,13 @@ export default function GrantsContent() {
   // agent's mailbox tab, but agents never pay for themselves — the owner's
   // wallet signs every purchase, including an agent's storage upgrade.
   async function freshWalletSession(expectedActor: string): Promise<any> {
-    try {
-      const stale: string[] = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && (key.startsWith("proton-storage") || key.startsWith("proton-link"))) stale.push(key);
-      }
-      stale.forEach((k) => localStorage.removeItem(k));
-    } catch { /* storage unavailable — proceed, worst case is the old behavior */ }
+    purgeProtonSdkStorage();
 
     const ProtonWebSDK = (await import("@proton/web-sdk")).default;
     await import("@proton/link");
     const { session } = await ProtonWebSDK({
       linkOptions: { chainId: XPR_CHAIN_ID, endpoints: XPR_ENDPOINTS },
-      transportOptions: { requestAccount: "mailsigil" },
+      transportOptions: { requestAccount: net.mailContract },
       selectorOptions: { appName: "Sigil Mail", enabledWalletTypes: ["webauth", "anchor", "proton"] as any },
     });
     if (!session) throw new Error("Wallet connection was cancelled");
@@ -600,14 +623,6 @@ export default function GrantsContent() {
     const payerActor = invoice.creditsWallet || actor;
     setPayFlow((pf) => (pf ? { ...pf, phase: "waiting", error: "" } : pf));
     setSigning(true);
-    const cachedAtStart: any = useWalletSessionStore.getState().session;
-    let loginInstance = "n/a";
-    try { loginInstance = localStorage.getItem("wallet_session_debug_login_instance") ?? "none-recorded"; } catch { /* noop */ }
-    setSigningDebug(
-      `debug: cache ${cachedAtStart ? "present" : "EMPTY"}` +
-      (cachedAtStart ? `, cachedActor="${cachedAtStart.auth?.actor?.toString()}" vs payerActor="${payerActor}"` : "") +
-      ` | storeInstance(here)=${WALLET_SESSION_STORE_INSTANCE_ID} storeInstance(atLogin)=${loginInstance}`
-    );
     const action = {
       account: opt.contract,
       name: "transfer",
@@ -616,17 +631,14 @@ export default function GrantsContent() {
     };
     try {
       const { session, reused } = await getWalletSession(payerActor);
-      setSigningDebug((d) => `${d} → ${reused ? "REUSING cached session (should be 1 sign)" : "fresh connect (2 signs expected)"}`);
       try {
         await transactWithTimeout(session, { actions: [action] }, { broadcast: true });
       } catch (err: any) {
         if (err?.code === "E_CANCEL") {
-          setSigningDebug((d) => `${d} → user cancelled — session kept, no auto-retry`);
           setPayFlow((pf) => (pf ? { ...pf, phase: "waiting", error: "Payment cancelled — click Pay to try again" } : pf));
           return;
         }
         if (!reused) throw err; // already a fresh session — this is a real failure
-        setSigningDebug((d) => `${d} → reused session's transact FAILED (${err?.message ?? err}), falling back to fresh connect`);
         useWalletSessionStore.getState().clearSession();
         const { session: fresh } = await getWalletSession(payerActor, true);
         await transactWithTimeout(fresh, { actions: [action] }, { broadcast: true });
@@ -691,7 +703,7 @@ export default function GrantsContent() {
             setPayFlow((pf) => (pf ? { ...pf, phase: "claiming" } : pf));
             try {
               const cred = await claimAgentMailbox(context.agentActor);
-              await addGrantedAccount(cred.username, cred.password); // best-effort, see handleClaimAgentMailbox
+              await addGrantedAccount(cred.username, cred.password, true); // best-effort, see handleClaimAgentMailbox
               setPayFlow((pf) => (pf ? { ...pf, phase: "done" } : pf));
             } catch (err: any) {
               setPayFlow((pf) => (pf ? { ...pf, phase: "error", error: err?.message ?? "paid, but mailbox provisioning failed — contact support" } : pf));
@@ -853,7 +865,6 @@ export default function GrantsContent() {
           >
             {signing ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Opening wallet…</>) : "Pay"}
           </Button>
-          {signingDebug && <p className="text-[10px] font-mono text-muted-foreground break-all">{signingDebug}</p>}
           {error && <p className="text-xs text-destructive">{error}</p>}
           <p className="text-xs text-muted-foreground flex items-center gap-1.5">
             <Loader2 className="w-3 h-3 animate-spin" />
@@ -930,13 +941,13 @@ export default function GrantsContent() {
     }
   };
 
-  const handleOfferGrant = async (toActor: string) => {
+  const handleOfferGrant = async (toActor: string, scope: KnownScope = "full") => {
     const key = `offer-${toActor}`;
     setStatus(key, "Sending…");
     try {
       const res = await authFetch("/api/grants/offer", {
         method: "POST",
-        body: JSON.stringify({ granteeActor: toActor }),
+        body: JSON.stringify({ granteeActor: toActor, scope }),
       });
       if (res.id || res.ok) {
         await loadAll();
@@ -1271,27 +1282,49 @@ export default function GrantsContent() {
 
             {accepted.length > 0 && (
               <div>
-                <h2 className="text-sm font-medium text-muted-foreground mb-2">Shared Mailboxes</h2>
+                <h2 className="text-sm font-medium text-muted-foreground mb-2">Shared with you</h2>
                 <div className="space-y-2">
                   {accepted.map((g) => {
                     const key = `open-${g.grantId}`;
+                    // FLAG #6 (2026-07-20): 'full' still gets a separate
+                    // issued app-password, added to the account switcher
+                    // exactly as before. 'read'/'send' are Stalwart-native
+                    // ACL shares — there's no credential to add; the owner's
+                    // mailbox shows up in YOUR OWN sidebar once your JMAP
+                    // session picks up the share (OpenSharedMailboxButton).
+                    const isAclShare = g.scope !== "full";
                     return (
-                      <div key={g.grantId} className="rounded-lg border border-border bg-card p-4 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium break-words">{g.ownerActor}@mailsigil.pro</p>
-                          <p className="text-xs text-muted-foreground">
-                            {g.scope} access{g.acceptedAt ? ` · accepted ${timeAgo(g.acceptedAt)}` : ""}
-                          </p>
+                      <div key={g.grantId} className="rounded-lg border border-border bg-card p-4 space-y-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium break-words">{g.ownerActor}@mailsigil.pro</p>
+                            <p className="text-xs text-muted-foreground flex items-center gap-1.5 flex-wrap mt-0.5">
+                              <GrantScopeChip scope={g.scope} />
+                              {g.acceptedAt ? `accepted ${timeAgo(g.acceptedAt)}` : ""}
+                            </p>
+                          </div>
+                          {isAclShare ? (
+                            <OpenSharedMailboxButton ownerActor={g.ownerActor} />
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleOpenGrantedMailbox(g)}
+                              disabled={!!actionStatus[key]}
+                              className="shrink-0 text-xs"
+                            >
+                              {actionStatus[key] ?? "Add Mailbox"}
+                            </Button>
+                          )}
                         </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleOpenGrantedMailbox(g)}
-                          disabled={!!actionStatus[key]}
-                          className="shrink-0 text-xs"
-                        >
-                          {actionStatus[key] ?? "Add Mailbox"}
-                        </Button>
+                        {isAclShare && (
+                          <p className="text-[11px] text-muted-foreground">
+                            Uses your own Sigil Mail login — no separate password. {g.scope === "read" ? "Read-only." : "You can also send as this mailbox below."}
+                          </p>
+                        )}
+                        {g.scope === "send" && (
+                          <SendGrantCompose grantId={g.grantId} ownerActor={g.ownerActor} authFetch={authFetch} />
+                        )}
                       </div>
                     );
                   })}
@@ -1378,7 +1411,7 @@ export default function GrantsContent() {
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-semibold">Agent Wallets</h1>
                 <a
-                  href={`${AUTH_URL}/agent-wallets-guide.md`}
+                  href={`${net.authUrl}/agent-wallets-guide.md`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-xs underline underline-offset-2 hover:opacity-80"
@@ -1387,14 +1420,51 @@ export default function GrantsContent() {
                   How agent wallets works
                 </a>
               </div>
-              {quota && (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {quota.agentMailboxes.used} of {quota.agentMailboxes.limit} agent slots used ({quota.agentMailboxes.max} max)
-                  {quota.agentMailboxes.purchasedSlots > 0 && ` (${quota.agentMailboxes.purchasedSlots} lifetime)`}
-                  {leaseInfo && leaseInfo.leases.length > 0 && ` (${leaseInfo.leases.length} on manual renewal)`}
-                  {leaseInfo?.autoPaySubscription && ` (${leaseInfo.autoPaySubscription.quantity} on agent auto-pay${leaseInfo.autoPaySubscription.status === "past_due" ? " — past due" : ""})`}.
-                </p>
-              )}
+              <p className="text-xs text-muted-foreground mt-1">
+                {/* The {" "} after a closing tag is REQUIRED, not decoration:
+                    JSX drops a plain space that sits at a line boundary, so
+                    writing `</strong> with it.` compiles to "…mailbox""with it."
+                    and renders as "mailboxwith" (2026-07-28 — introduced here by
+                    removing the original {" "} along with some parentheticals). */}
+                Each agent below can go two ways: you can{" "}
+                <strong className="font-medium text-foreground">view its inbox</strong>, or you can{" "}
+                <strong className="font-medium text-foreground">share your mailbox</strong>{" "}
+                with it. They&apos;re independent — do either, both, or neither.
+              </p>
+              {quota && (() => {
+                // Was: "3 of 6 agent slots used (5 max) (1 lifetime) (2 on
+                // manual renewal)" — four numbers in nested parentheses, and
+                // the first two contradict each other on sight (Gabriel
+                // 2026-07-28: "3 of 6 agents slots used 5 max is confusing").
+                //
+                // They don't actually contradict: `limit` is what you HOLD
+                // (1 free + lifetime purchases + live leases + subscription
+                // quantity, which stack) and `max` is the ceiling on BUYING
+                // MORE — enforced only at purchase time, so the limit can
+                // legitimately exceed it. But a number you can't act on,
+                // shown as "max" next to a bigger number, just reads as a
+                // bug. Surface it only when it bites: when you can't buy
+                // another slot. The rest becomes one flat " · " list.
+                const { used, limit, max, purchasedSlots } = quota.agentMailboxes;
+                const parts: string[] = [];
+                if (purchasedSlots > 0) parts.push(`${purchasedSlots} permanent`);
+                if (leaseInfo && leaseInfo.leases.length > 0) {
+                  parts.push(`${leaseInfo.leases.length} need manual renewal`);
+                }
+                if (leaseInfo?.autoPaySubscription) {
+                  parts.push(
+                    `${leaseInfo.autoPaySubscription.quantity} on agent auto-pay` +
+                    (leaseInfo.autoPaySubscription.status === "past_due" ? " — past due" : ""),
+                  );
+                }
+                if (limit >= max) parts.push("purchase limit reached");
+                return (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {used} of {limit} agent slots used
+                    {parts.length > 0 ? ` · ${parts.join(" · ")}` : ""}
+                  </p>
+                );
+              })()}
               {leaseInfo && (() => {
                 const now = Date.now();
                 const inGrace = leaseInfo.leases.filter(
@@ -1466,7 +1536,7 @@ export default function GrantsContent() {
                     )}
                     <span className="text-[11px] text-muted-foreground">
                       Have an agent? It can renew this automatically —{" "}
-                      <a href={`${AUTH_URL}/agent-wallets-guide.md`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" style={{ color: "#FACC15" }}>
+                      <a href={`${net.authUrl}/agent-wallets-guide.md`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" style={{ color: "#FACC15" }}>
                         see how
                       </a>
                     </span>
@@ -1550,40 +1620,87 @@ export default function GrantsContent() {
                   const isRemoving = removingAgent === agentActor;
                   return (
                     <div key={agentActor} className="rounded-lg border border-border bg-card p-4 space-y-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium break-words">{agentActor}@mailsigil.pro</p>
-                          <p className="text-xs text-muted-foreground">Your agent</p>
-                        </div>
-                        <div className="flex flex-col items-end gap-1.5 shrink-0">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium break-words">{agentActor}@mailsigil.pro</p>
+                        <p className="text-xs text-muted-foreground">Your agent</p>
+                      </div>
+
+                      {/* Two directional zones, kept visually distinct (not two
+                          lookalike stacked buttons) — the two actions below move
+                          mail access in OPPOSITE directions, which is exactly what
+                          was confusing before this restructure (product feedback,
+                          2026-07-21): a divider + separate mini-headings + a
+                          directional icon on each, instead of a single right-
+                          aligned column where they read as interchangeable. */}
+                      {/* Two directional zones side by side, split by a full-height
+                          vertical divider with breathing room on both sides (Gabriel's
+                          "Option 2", 2026-07-21) — the earlier thin divider read as
+                          cramped. Stacks on mobile. */}
+                      <div className="grid gap-4 sm:gap-0 sm:grid-cols-2">
+                        {/* Zone 1: agent's mail comes TO you */}
+                        <div className="space-y-1.5 sm:pr-6 sm:border-r sm:border-border">
+                          <p className="text-xs font-semibold flex items-center gap-1.5">
+                            <Inbox className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            View this agent&apos;s inbox
+                          </p>
+                          <p className="text-[11px] text-muted-foreground leading-snug">
+                            Adds <span className="font-medium text-foreground break-all">{agentActor}@mailsigil.pro</span> to your account switcher, so you can read and act as this agent.
+                          </p>
                           <Button
                             size="sm"
                             onClick={() => openAgentInWebmail(agentActor)}
                             disabled={isOpening}
                             className="text-xs bg-[#FACC15] hover:bg-[#EAB308] text-black"
                           >
-                            {isOpening ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Adding…</>) : "Add agent account"}
+                            {isOpening ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Adding…</>) : "Open agent's inbox"}
                           </Button>
+                          {openError && (
+                            <p className="text-xs text-destructive">{openError}</p>
+                          )}
+                        </div>
+
+                        {/* Zone 2: your mail goes TO the agent */}
+                        <div className="space-y-1.5 sm:pl-6">
+                          <p className="text-xs font-semibold flex items-center gap-1.5">
+                            <Share2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            Share your mailbox
+                          </p>
+                          <p className="text-[11px] text-muted-foreground leading-snug">
+                            Lets this agent access <span className="font-medium text-foreground">your</span> mail, at the scope you pick below.
+                          </p>
                           {liveGrant?.status === "accepted" ? (
-                            <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
-                              <Check className="w-3 h-3" /> Grant accepted
+                            <span className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                                <Check className="w-3 h-3" /> Grant accepted
+                              </span>
+                              <GrantScopeChip scope={liveGrant.scope} />
+                            </span>
+                          ) : liveGrant?.status === "pending" ? (
+                            <span className="flex items-center gap-1.5 flex-wrap">
+                              <Button size="sm" variant="outline" disabled className="text-xs">
+                                Offer sent
+                              </Button>
+                              <GrantScopeChip scope={liveGrant.scope} />
                             </span>
                           ) : (
-                            <Button size="sm" variant="outline" onClick={() => handleOfferGrant(agentActor)} disabled={isSending || liveGrant?.status === "pending"} className="text-xs">
-                              {isSending ? "Sending…" : liveGrant?.status === "pending" ? "Offer sent" : "Offer My Mailbox Access"}
-                            </Button>
-                          )}
-                          {!confirmingRemove && (
-                            <button
-                              onClick={() => setRemovingAgent(`confirm-${agentActor}`)}
-                              disabled={isRemoving}
-                              className="text-[11px] text-destructive/70 hover:text-destructive underline underline-offset-2"
-                            >
-                              Remove from slot
-                            </button>
+                            <div className="flex flex-col items-start gap-1">
+                              <GrantScopePicker
+                                value={offerScope[agentActor] ?? "full"}
+                                onChange={(s) => setOfferScope((m) => ({ ...m, [agentActor]: s }))}
+                              />
+                              <Button
+                                size="sm"
+                                onClick={() => handleOfferGrant(agentActor, offerScope[agentActor] ?? "full")}
+                                disabled={isSending}
+                                className="text-xs bg-[#FACC15] hover:bg-[#EAB308] text-black"
+                              >
+                                {isSending ? "Sharing…" : "Share my mailbox"}
+                              </Button>
+                            </div>
                           )}
                         </div>
                       </div>
+
                       {liveGrant?.status === "pending" && (
                         <div className="rounded-md bg-primary/8 border border-primary/20 px-3 py-2 flex items-start gap-2">
                           <ShieldCheck className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
@@ -1609,9 +1726,6 @@ export default function GrantsContent() {
                       )}
                       {removeError[agentActor] && (
                         <p className="text-xs text-destructive">{removeError[agentActor]}</p>
-                      )}
-                      {openError && (
-                        <p className="text-xs text-destructive">{openError}</p>
                       )}
                       {(() => {
                         // Feature A: an attached lease or suspension shows
@@ -1761,6 +1875,20 @@ export default function GrantsContent() {
                           </div>
                         );
                       })()}
+                      {/* Destructive, distinct from the two access zones above —
+                          kept small, muted, and separated so it doesn't compete
+                          with them for attention. */}
+                      {!confirmingRemove && (
+                        <div className="pt-1.5 border-t border-border/60 flex justify-end">
+                          <button
+                            onClick={() => setRemovingAgent(`confirm-${agentActor}`)}
+                            disabled={isRemoving}
+                            className="text-[11px] text-destructive/70 hover:text-destructive underline underline-offset-2"
+                          >
+                            Remove from slot
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1829,19 +1957,43 @@ export default function GrantsContent() {
                   );
                 })}
 
-                {linked.ownedBy && (
-                  <div className="rounded-lg border border-border bg-card p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium break-words">{linked.ownedBy}@mailsigil.pro</p>
-                        <p className="text-xs text-muted-foreground">Your owner</p>
+                {linked.ownedBy && (() => {
+                  const ownerActor = linked.ownedBy!;
+                  const liveOwnerGrant = issued.find(g => g.grantee_actor === ownerActor && (g.status === "pending" || g.status === "accepted"));
+                  const offerKey = `offer-${ownerActor}`;
+                  const isSending = actionStatus[offerKey] === "Sending…";
+                  return (
+                    <div className="rounded-lg border border-border bg-card p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium break-words">{ownerActor}@mailsigil.pro</p>
+                          <p className="text-xs text-muted-foreground">Your owner</p>
+                        </div>
+                        {liveOwnerGrant ? (
+                          <span className="flex items-center gap-1.5 shrink-0">
+                            <span className={cn("text-xs font-medium", liveOwnerGrant.status === "accepted" ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>
+                              {liveOwnerGrant.status === "accepted" ? "Access granted" : "Offer sent"}
+                            </span>
+                            <GrantScopeChip scope={liveOwnerGrant.scope} />
+                          </span>
+                        ) : (
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            <GrantScopePicker
+                              value={offerScope[ownerActor] ?? "full"}
+                              onChange={(s) => setOfferScope((m) => ({ ...m, [ownerActor]: s }))}
+                            />
+                            <Button size="sm" variant="outline" onClick={() => handleOfferGrant(ownerActor, offerScope[ownerActor] ?? "full")} disabled={isSending} className="text-xs">
+                              {isSending ? "Sending…" : "Send Access Offer"}
+                            </Button>
+                            {actionStatus[offerKey] && !isSending && (
+                              <span className="text-xs text-destructive">{actionStatus[offerKey]}</span>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <Button size="sm" variant="outline" onClick={() => handleOfferGrant(linked.ownedBy!)} disabled={!!actionStatus[`offer-${linked.ownedBy}`]} className="text-xs">
-                        {actionStatus[`offer-${linked.ownedBy}`] ?? "Send Access Offer"}
-                      </Button>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
               );
             })()}
@@ -1873,9 +2025,13 @@ export default function GrantsContent() {
                     <div key={g.grantId} className="rounded-lg border border-border bg-card p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="text-sm font-medium break-words">{g.from}</p>
-                          <p className="text-xs text-muted-foreground">
-                            Offering {g.scope} access · {timeAgo(g.createdAt)}
+                          <p className="text-sm font-medium break-words flex items-center gap-1.5 flex-wrap">
+                            {g.from}
+                            <GrantHolderBadge kind={getHolderKind(g.from, linked)} />
+                          </p>
+                          <p className="text-xs text-muted-foreground flex items-center gap-1.5 flex-wrap mt-0.5">
+                            <GrantScopeChip scope={g.scope} />
+                            {timeAgo(g.createdAt)}
                           </p>
                           {actionStatus[g.grantId] && (
                             <p className="text-xs text-emerald-500 mt-1">{actionStatus[g.grantId]}</p>
@@ -1943,8 +2099,15 @@ export default function GrantsContent() {
                   <div key={g.id} className="rounded-lg border border-border bg-card p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="text-sm font-medium break-words">{g.grantee_actor}</p>
-                        <p className="text-xs text-muted-foreground">{g.scope} access · {timeAgo(g.created_at)}</p>
+                        <p className="text-sm font-medium break-words flex items-center gap-1.5 flex-wrap">
+                          {g.grantee_actor}
+                          <GrantHolderBadge kind={getHolderKind(g.grantee_actor, linked)} />
+                        </p>
+                        <p className="text-xs text-muted-foreground flex items-center gap-1.5 flex-wrap mt-0.5">
+                          <GrantScopeChip scope={g.scope} />
+                          {timeAgo(g.created_at)}
+                          {g.accepted_at ? ` · accepted ${timeAgo(g.accepted_at)}` : ""}
+                        </p>
                         <div className="mt-1"><StatusBadge status={g.status} /></div>
                         {actionStatus[g.id] && (
                           <p className="text-xs text-muted-foreground mt-1">{actionStatus[g.id]}</p>

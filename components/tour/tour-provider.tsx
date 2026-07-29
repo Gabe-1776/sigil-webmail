@@ -7,6 +7,7 @@ import { useCalendarStore } from "@/stores/calendar-store";
 import { useWebDAVStore } from "@/stores/webdav-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { usePolicyStore } from "@/stores/policy-store";
+import { useIsMobile, useIsTablet } from "@/hooks/use-media-query";
 import { getTourSteps, type TourStep } from "./tour-steps";
 import { TourOverlay } from "./tour-overlay";
 
@@ -38,9 +39,13 @@ export function TourProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { isDemoMode } = useAuthStore();
+  const client = useAuthStore((s) => s.client);
   const { supportsCalendar } = useCalendarStore();
   const calendarEnabled = usePolicyStore((s) => s.isFeatureEnabled('calendarEnabled'));
+  const contactsEnabled = usePolicyStore((s) => s.isFeatureEnabled('contactsEnabled'));
   const { supportsWebDAV } = useWebDAVStore();
+  const isMobile = useIsMobile();
+  const isTablet = useIsTablet();
   const tourCompleted = useSettingsStore((s) => s.tourCompleted);
   const showOnboardingOnNewDevices = useSettingsStore((s) => s.showOnboardingOnNewDevices);
   const updateSetting = useSettingsStore((s) => s.updateSetting);
@@ -49,7 +54,18 @@ export function TourProvider({ children }: { children: ReactNode }) {
   const [currentStep, setCurrentStep] = useState(0);
   const [hasCompletedTour, setHasCompletedTour] = useState(false);
 
-  const steps = getTourSteps({ isDemoMode, supportsCalendar: supportsCalendar && calendarEnabled, supportsWebDAV: supportsWebDAV !== false });
+  // Each `supports*` must mirror navigation-rail.tsx's `hidden` condition for
+  // the same icon — a step pointing at an icon that isn't rendered stalls the
+  // tour for 5 seconds before skipping itself. See getTourSteps.
+  const steps = getTourSteps({
+    isDemoMode,
+    supportsCalendar: supportsCalendar && calendarEnabled,
+    supportsContacts: (client?.supportsContacts() ?? false) && contactsEnabled,
+    supportsWebDAV: supportsWebDAV !== false,
+    // Same condition page.tsx uses to swap the vertical rail for the bottom
+    // bar, so the tour always describes the chrome actually on screen.
+    isCompactNav: isMobile || isTablet,
+  });
 
   useEffect(() => {
     // One-time migration: if the legacy per-device flag is set but the synced
