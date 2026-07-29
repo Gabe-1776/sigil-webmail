@@ -50,3 +50,6 @@ next-env.d.ts
 
 # Sibling repos
 /repos/
+
+# Test artifacts from e2e/tour-repro.mjs
+tour-repro*.png
