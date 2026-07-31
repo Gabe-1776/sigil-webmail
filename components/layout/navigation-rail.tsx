@@ -60,7 +60,18 @@ interface NavigationRailProps {
   activeItemId?: 'mail' | 'calendar' | 'contacts' | 'files' | 'settings' | null;
 }
 
-function StorageQuotaCircle({ quota, usagePercent }: { quota: { used: number; total: number }; usagePercent: number }) {
+function StorageQuotaCircle({
+  quota,
+  usagePercent,
+  placement = "right",
+}: {
+  quota: { used: number; total: number };
+  usagePercent: number;
+  // "right" suits the vertical rail. The horizontal bar sits at the bottom of
+  // the screen, where a popover opened to the right lands off-screen — so the
+  // mobile bar opens it upward and centred instead.
+  placement?: "right" | "top";
+}) {
   const t = useTranslations("sidebar");
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -70,12 +81,28 @@ function StorageQuotaCircle({ quota, usagePercent }: { quota: { used: number; to
   const updatePosition = useCallback(() => {
     if (!buttonRef.current) return;
     const rect = buttonRef.current.getBoundingClientRect();
+    if (placement === "top") {
+      const WIDTH = 208; // w-52
+      const MARGIN = 8;
+      // Centre on the button, then clamp so it never runs off either edge on a
+      // narrow phone.
+      const left = Math.min(
+        Math.max(MARGIN, rect.left + rect.width / 2 - WIDTH / 2),
+        Math.max(MARGIN, window.innerWidth - WIDTH - MARGIN),
+      );
+      setPopoverStyle({
+        position: "fixed",
+        left,
+        bottom: window.innerHeight - rect.top + MARGIN,
+      });
+      return;
+    }
     setPopoverStyle({
       position: "fixed",
       left: rect.right + 8,
       bottom: window.innerHeight - rect.bottom,
     });
-  }, []);
+  }, [placement]);
 
   useEffect(() => {
     if (!open) return;
@@ -319,6 +346,11 @@ export function NavigationRail({
       }
     };
 
+  // Declared above the horizontal early-return so BOTH render paths can use
+  // them — the mobile bar needs the same quota values as the vertical rail.
+  const quotaUsagePercent = quota && quota.total > 0 ? Math.min((quota.used / quota.total) * 100, 100) : 0;
+  const showQuota = quota && (quota.total > 0 || quota.used > 0);
+
   if (orientation === "horizontal") {
     return (
       <nav
@@ -425,6 +457,23 @@ export function NavigationRail({
           </a>
         )}
 
+        {/* Storage. Lived only in the vertical rail, so on a phone the usage and
+            percentage were invisible unless you dug into account settings —
+            Gabriel, 2026-07-31. Same shape of gap as the tour's missing
+            data-tour attributes: the horizontal branch is a separate render
+            path and additions to the rail do not reach it automatically. */}
+        {showQuota && (
+          <div
+            data-tour="storage-quota"
+            className="flex flex-col items-center justify-center gap-1 py-2 px-1 min-h-[44px] grow shrink-0 basis-[64px]"
+          >
+            <StorageQuotaCircle quota={quota!} usagePercent={quotaUsagePercent} placement="top" />
+            <span className="text-[10px] font-medium leading-tight truncate max-w-full text-muted-foreground">
+              {t("storage") || "Storage"}
+            </span>
+          </div>
+        )}
+
         {/* Settings */}
         <Link
           href="/settings"
@@ -451,8 +500,6 @@ export function NavigationRail({
     );
   }
 
-  const quotaUsagePercent = quota && quota.total > 0 ? Math.min((quota.used / quota.total) * 100, 100) : 0;
-  const showQuota = quota && (quota.total > 0 || quota.used > 0);
 
   return (
     <div

@@ -982,7 +982,14 @@ export default function GrantsContent() {
       if (res.ok) {
         localStorage.removeItem("sigil_auth_token");
         localStorage.removeItem("sigil_actor");
-        router.push("/login");
+        // Full teardown, not just a route change. router.push() swapped the URL
+        // while the JMAP client stayed connected and the auth store still said
+        // "authenticated", so the login page bounced straight back and only a
+        // manual browser refresh appeared to log you out — Gabriel: "deleting
+        // account doesn't send me to login page unless I refresh the page"
+        // (2026-07-31). logout() disconnects the client, clears the stores and
+        // timers, drops the account-scoped tokens, and then redirects.
+        useAuthStore.getState().logout();
       } else {
         setDeleting(false);
         setDeleteConfirmText("");
