@@ -128,12 +128,12 @@ export function AboutDataSettings() {
             <div className="shrink-0">
               <img
                 src={`${getPathPrefix()}/branding/sigil-logo.svg`}
-                alt="Sigil Mail"
+                alt="Mail Sigil"
                 className="w-12 h-12 object-contain dark:hidden group-hover/about:scale-105 group-active/about:scale-95 transition-transform"
               />
               <img
                 src={`${getPathPrefix()}/branding/sigil-logo.svg`}
-                alt="Sigil Mail"
+                alt="Mail Sigil"
                 className="w-12 h-12 object-contain hidden dark:block group-hover/about:scale-105 group-active/about:scale-95 transition-transform"
               />
             </div>

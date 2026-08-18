@@ -96,7 +96,7 @@ export default function ConfirmPage() {
       const SDK_OPTS = {
         linkOptions: { chainId: net.chainId, endpoints: net.endpoints },
         transportOptions: { requestAccount: net.mailContract },
-        selectorOptions: { appName: "Sigil Mail", enabledWalletTypes: ["webauth", "anchor", "proton"] as any },
+        selectorOptions: { appName: "Mail Sigil", enabledWalletTypes: ["webauth", "anchor", "proton"] as any },
       };
 
       // Silent session restore first — one wallet approval (the signature)
@@ -362,7 +362,7 @@ function ConfirmContent({
           <p className="text-sm text-muted-foreground">This mailbox is ready — the agent that requested it will pick up its credential automatically.</p>
         ) : null}
         <Button onClick={() => router.push("/login")} className="w-full">
-          {stage.loggedIn === false ? "Back to Sigil Mail" : "Open Sigil Mail"}
+          {stage.loggedIn === false ? "Back to Mail Sigil" : "Open Mail Sigil"}
         </Button>
       </>
     );
@@ -412,12 +412,12 @@ function ConfirmContent({
         <p className="text-sm text-muted-foreground">
           {approvingForSomeoneElse ? (
             <>
-              <span className="font-medium text-foreground">{info.initiatedBy}</span>{" "}wants to create a Sigil Mail account
+              <span className="font-medium text-foreground">{info.initiatedBy}</span>{" "}wants to create a Mail Sigil account
               for your linked agent <span className="font-medium text-foreground">{info.forActor}</span>{" "}— approve as its owner
             </>
           ) : (
             <>
-              <span className="font-medium text-foreground">{info.initiatedBy}</span>{" "}wants to create a Sigil Mail account for you
+              <span className="font-medium text-foreground">{info.initiatedBy}</span>{" "}wants to create a Mail Sigil account for you
             </>
           )}
         </p>

@@ -1,6 +1,6 @@
-# Sigil Mail Webmail (webmail.mailsigil.pro) — agent guide
+# Mail Sigil Webmail (webmail.mailsigil.pro) — agent guide
 
-This is the browser-based email client for Sigil Mail, served at
+This is the browser-based email client for Mail Sigil, served at
 webmail.mailsigil.pro. It is a Bulwark-based JMAP frontend that connects
 to Stalwart at mail.mailsigil.pro.
 
@@ -61,8 +61,8 @@ receives a link like:
 Opening it shows a preview of what will be created and who initiated it.
 The human signs with their wallet to approve. Same shape as sign-in above:
 an authorization, then a signature — and on this page the approval itself
-(`mailsigil::approve`) IS broadcast on chain, because consent has to be
-publicly auditable.
+is NOT broadcast on chain: the wallet signature proves identity, and the
+approval is an HTTP POST to the auth service, which records it.
 
 ## Full technical reference
 

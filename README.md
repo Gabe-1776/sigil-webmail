@@ -20,11 +20,11 @@ A modern, self-hosted webmail client for [Stalwart Mail Server](https://stalw.ar
 
 ---
 
-## About this fork (Sigil Mail)
+## About this fork (Mail Sigil)
 
 This repository is a **modified fork of
 [Bulwark Webmail](https://github.com/bulwarkmail/webmail)**, operated as the
-webmail client for [Sigil Mail](https://mailsigil.pro) — an agent-native
+webmail client for [Mail Sigil](https://mailsigil.pro) — an agent-native
 email service where AI agents and their humans share mailboxes.
 
 Modifications on top of upstream Bulwark (see the git history for the full

@@ -191,6 +191,22 @@ export default function LoginPage() {
   const [oauthLoading, setOauthLoading] = useState(false);
   const [demoLoading, setDemoLoading] = useState(false);
 
+  // CSRF confirmation interstitial (Gabriel decision 2026-08-17): a token
+  // link — either the ?sigil_grant_token= query param or the #sigil-xnet=
+  // cross-network handoff fragment — must not silently log this browser in.
+  // A crafted link would otherwise drop the victim's session into the
+  // attacker's mailbox. Both paths now stop at an interstitial that names
+  // the actor and requires an explicit click before the login / grant
+  // exchange runs. The network toggle stays live while it shows: the grant
+  // exchange targets the SELECTED network's auth backend at confirm time,
+  // so the user can still pick the right network before clicking; the
+  // handoff token belongs to this deployment's DEFAULT_NETWORK (the site it
+  // landed on) and is not re-targeted by the toggle.
+  type PendingLogin =
+    | { kind: "grant"; token: string; actor: string }
+    | { kind: "handoff"; token: string; actor: string };
+  const [pendingLogin, setPendingLogin] = useState<PendingLogin | null>(null);
+
   const suggestionsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const justSelectedSuggestion = useRef(false);
@@ -205,41 +221,17 @@ export default function LoginPage() {
     initializeTheme();
   }, [initializeTheme]);
 
-  // Sigil grant auto-login: dashboard passes a one-time token so the user
-  // never has to handle credentials manually when opening a shared mailbox.
+  // Sigil grant token: the dashboard's one-time link no longer logs in
+  // automatically (CSRF — see the PendingLogin comment above). It only arms
+  // the interstitial below; the exchange itself waits for the user's click
+  // (confirmGrantLogin), so the single-use token is only ever spent by an
+  // explicit action. The effect does NOT re-run after the interstitial is
+  // dismissed (no pendingLogin dep), so Cancel sticks for this page visit.
   useEffect(() => {
-    if (!sigilGrantToken || !serverUrl || xprLoading) return;
-    let cancelled = false;
-    (async () => {
-      setXprLoading(true);
-      setXprStatus("Opening shared mailbox…");
-      try {
-        // Route through the same session-network resolution as handleXprLogin
-        // (see lib/xpr-network.ts) — selectedNetwork is seeded from
-        // getSessionNetwork() above, so this correctly hits the testnet auth
-        // backend on a testnet build/session instead of always mainnet.
-        const res = await fetch(`${getNetwork(selectedNetwork).authUrl}/api/grants/exchange-token`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token: sigilGrantToken }),
-        }).then(r => r.json());
-        if (cancelled) return;
-        if (!res.ok) throw new Error(res.error || "Token exchange failed");
-        const success = await login(serverUrl, res.username, res.password);
-        if (cancelled) return;
-        if (success) {
-          router.push("/");
-        } else {
-          setXprError("Auto-login failed — the grant may have been revoked.");
-        }
-      } catch (err) {
-        if (!cancelled) setXprError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (!cancelled) setXprLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!sigilGrantToken || !serverUrl) return;
+    if (pendingLogin?.kind === "grant" && pendingLogin.token === sigilGrantToken) return;
+    setPendingLogin({ kind: "grant", token: sigilGrantToken, actor: "" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sigilGrantToken, serverUrl]);
 
   useEffect(() => {
@@ -289,8 +281,10 @@ export default function LoginPage() {
   // verification and bounced the user here with the fresh access token in
   // the URL fragment. Scrub the fragment from history FIRST, then prove the
   // token live via /api/auth/refresh — which also mints a same-actor
-  // replacement, so the carried token isn't the one we keep — and finish the
-  // ordinary mailbox login. Forged/expired payloads land back on the form.
+  // replacement, so the carried token isn't the one we keep. The refresh is
+  // as far as it goes unattended: the mailbox login itself waits for the
+  // confirmation interstitial (CSRF, see the PendingLogin comment).
+  // Forged/expired payloads land back on the form.
   const handoffStartedRef = useRef(false);
   useEffect(() => {
     const hash = window.location.hash;
@@ -319,7 +313,15 @@ export default function LoginPage() {
           throw new Error(refresh?.error || "Handoff sign-in was rejected — please sign in again");
         }
         if (cancelled) return;
-        await finishMailboxLogin(refresh.accessToken, DEFAULT_NETWORK);
+        // Confirmation gate (CSRF, see the PendingLogin comment): the token
+        // is refreshed and proven live here, but the mailbox login waits for
+        // the interstitial's explicit click (confirmHandoffLogin).
+        setPendingLogin({
+          kind: "handoff",
+          token: refresh.accessToken,
+          actor: actorFromAccessToken(refresh.accessToken),
+        });
+        setXprLoading(false);
       } catch (err) {
         if (!cancelled) {
           setXprError(err instanceof Error ? err.message : String(err));
@@ -329,7 +331,7 @@ export default function LoginPage() {
     })();
     return () => { cancelled = true; };
     // Re-fires when serverUrl arrives (see the guard above);
-    // finishMailboxLogin reads the current render scope.
+    // confirmHandoffLogin reads the current render scope.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverUrl]);
 
@@ -749,6 +751,74 @@ export default function LoginPage() {
     router.push("/");
   };
 
+  // Runs when the user confirms the interstitial for the handoff path — the
+  // mailbox login that used to fire automatically after the refresh above.
+  const confirmHandoffLogin = async () => {
+    if (!pendingLogin || pendingLogin.kind !== "handoff") return;
+    const token = pendingLogin.token;
+    setPendingLogin(null);
+    setXprLoading(true);
+    setXprError("");
+    try {
+      await finishMailboxLogin(token, DEFAULT_NETWORK);
+    } catch (err) {
+      setXprError(err instanceof Error ? err.message : String(err));
+      setXprLoading(false);
+    }
+  };
+
+  // Drop the one-time grant token from the URL once it's spent or declined —
+  // the security review flagged it riding in a query param (browser history)
+  // for the life of the link.
+  const scrubGrantTokenFromUrl = () => {
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("sigil_grant_token")) {
+        url.searchParams.delete("sigil_grant_token");
+        window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+      }
+    } catch { /* ignore */ }
+  };
+
+  // Cancel the interstitial. The token stays unspent (the exchange only ever
+  // runs after an explicit Continue click) but is removed from the URL.
+  const dismissPendingLogin = () => {
+    setPendingLogin(null);
+    scrubGrantTokenFromUrl();
+  };
+
+  // Runs when the user confirms the interstitial for the grant path — the
+  // exchange + login that used to fire automatically on mount. Reads
+  // selectedNetwork at click time, so the network toggle above still picks
+  // which auth backend the token is exchanged against.
+  const confirmGrantLogin = async () => {
+    if (!pendingLogin || pendingLogin.kind !== "grant") return;
+    const grantToken = pendingLogin.token;
+    setPendingLogin(null);
+    scrubGrantTokenFromUrl();
+    setXprLoading(true);
+    setXprError("");
+    setXprStatus("Opening shared mailbox…");
+    try {
+      const res = await fetch(`${getNetwork(selectedNetwork).authUrl}/api/grants/exchange-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: grantToken }),
+      }).then(r => r.json());
+      if (!res.ok) throw new Error(res.error || "Token exchange failed");
+      const success = await login(serverUrl, res.username, res.password);
+      if (success) {
+        router.push("/");
+      } else {
+        setXprError("Auto-login failed — the grant may have been revoked.");
+      }
+    } catch (err) {
+      setXprError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setXprLoading(false);
+    }
+  };
+
   const handleXprLogin = async (networkName: XprNetworkName, forceFresh = false) => {
     setXprError("");
     setXprLoading(true);
@@ -769,7 +839,7 @@ export default function LoginPage() {
       const SDK_OPTS = {
         linkOptions: { chainId: net.chainId, endpoints: net.endpoints },
         transportOptions: { requestAccount: net.mailContract },
-        selectorOptions: { appName: appName || "Sigil Mail", enabledWalletTypes: ["webauth", "anchor", "proton"] as any },
+        selectorOptions: { appName: appName || "Mail Sigil", enabledWalletTypes: ["webauth", "anchor", "proton"] as any },
       };
 
       // Silent session restore FIRST — the SimpleDex model: restoring the
@@ -931,7 +1001,6 @@ export default function LoginPage() {
       // wallet-session-store.ts for why this is safe (in-memory only,
       // never localStorage — doesn't touch the mechanism that caused the
       // 2026-07-10 stale-session hang).
-      console.log("[wallet-session] login: caching session for actor", session?.auth?.actor?.toString());
       useWalletSessionStore.getState().setSession(session);
 
       // Upload the wallet's serialized channel session (fire-and-forget).
@@ -1375,8 +1444,64 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* Dev Mode: One-click login */}
-            {devMode ? (
+            {/* CSRF confirmation interstitial (2026-08-17): a token link —
+                ?sigil_grant_token= or the #sigil-xnet= handoff — must not
+                silently log this browser in. Rendered instead of the login
+                form until the user explicitly continues or cancels. The
+                network toggle (top-left) stays live while it shows. */}
+            {pendingLogin ? (
+              <div className="p-4 rounded-xl border border-border/60 bg-muted/30 space-y-3" role="alertdialog" aria-label="Confirm sign-in">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0 shadow-sm">
+                    <Shield className="w-5 h-5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    {pendingLogin.kind === "handoff" ? (
+                      <>
+                        <p className="text-sm font-medium text-foreground">
+                          {pendingLogin.actor
+                            ? `Continue as ${pendingLogin.actor}?`
+                            : "Continue with this sign-in?"}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                          Your wallet sign-in completed on the other network.
+                          Confirm below to finish signing into this mailbox.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm font-medium text-foreground">
+                          Open the shared mailbox?
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                          A shared mailbox access link was opened in this browser.
+                          Continue to sign in to the mailbox the link was issued for.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    className="flex-1 h-10 text-sm font-medium bg-primary hover:bg-primary/90"
+                    onClick={() => pendingLogin.kind === "handoff" ? confirmHandoffLogin() : confirmGrantLogin()}
+                  >
+                    {pendingLogin.kind === "handoff" && pendingLogin.actor
+                      ? `Continue as ${pendingLogin.actor}`
+                      : "Continue"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="flex-1 h-10 text-sm"
+                    onClick={dismissPendingLogin}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : devMode ? (
               <div className="space-y-4">
                 <Button
                   type="button"

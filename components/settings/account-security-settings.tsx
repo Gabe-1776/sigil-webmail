@@ -562,7 +562,7 @@ export function AccountSecuritySettings() {
           <>
             {/* Change Password + 2FA removed for now — both require a
                 Stalwart account password the user actually knows, but
-                Sigil Mail mailboxes get provisioned with a random,
+                Mail Sigil mailboxes get provisioned with a random,
                 never-shown password (see provisioning.ts: "this account
                 is only ever reached via the OIDC token / agent
                 app-passwords"). Wallet-login accounts have no "current

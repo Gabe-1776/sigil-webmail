@@ -57,7 +57,7 @@ export async function proxy(request: NextRequest) {
         `<title>Down for maintenance</title><style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;` +
         `justify-content:center;min-height:100vh;margin:0;background:#0D1B5E;color:#fff;text-align:center;padding:24px}` +
         `div{max-width:420px}h1{font-size:1.4rem;margin-bottom:.5rem}p{opacity:.8;line-height:1.5}</style></head>` +
-        `<body><div><h1>Down for maintenance</h1><p>Sigil Mail's webmail is temporarily offline while we ship a fix. ` +
+        `<body><div><h1>Down for maintenance</h1><p>Mail Sigil's webmail is temporarily offline while we ship a fix. ` +
         `Mail is still being delivered normally — nothing is lost. Back shortly.</p></div></body></html>`,
         { status: 503, headers: { "content-type": "text/html; charset=utf-8", "Retry-After": "1800" } },
       );

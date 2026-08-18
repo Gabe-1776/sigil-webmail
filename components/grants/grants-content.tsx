@@ -550,7 +550,7 @@ export default function GrantsContent() {
     const { session } = await ProtonWebSDK({
       linkOptions: { chainId: XPR_CHAIN_ID, endpoints: XPR_ENDPOINTS },
       transportOptions: { requestAccount: net.mailContract },
-      selectorOptions: { appName: "Sigil Mail", enabledWalletTypes: ["webauth", "anchor", "proton"] as any },
+      selectorOptions: { appName: "Mail Sigil", enabledWalletTypes: ["webauth", "anchor", "proton"] as any },
     });
     if (!session) throw new Error("Wallet connection was cancelled");
     const connected = session.auth.actor.toString();
@@ -573,18 +573,15 @@ export default function GrantsContent() {
       // TEMP DEBUG (remove once the reuse-not-kicking-in report is
       // resolved) — logs exactly why a cache hit/miss happened, since
       // this can only be observed live in a real browser.
-      console.log("[wallet-session] getWalletSession: cached=", !!cached, "cachedActor=", cached?.auth?.actor?.toString(), "expectedActor=", expectedActor);
       // Re-verify actor match on every reuse, not just at connect time —
       // the cache is a global singleton, so it could be holding a session
       // from a DIFFERENT wallet if the human connected a different one.
       // Stale-for-this-actor is treated as a plain cache miss, not an error.
       if (cached && expectedActor && cached.auth?.actor?.toString() === expectedActor) {
-        console.log("[wallet-session] reusing cached session — should be 1 sign only");
         return { session: cached, reused: true };
       }
       if (cached) useWalletSessionStore.getState().clearSession();
     }
-    console.log("[wallet-session] no usable cache — doing a fresh connect (forceFresh=" + forceFresh + ")");
     return { session: await freshWalletSession(expectedActor), reused: false };
   }
 
@@ -832,7 +829,7 @@ export default function GrantsContent() {
       const days = context.kind === "storage-upgrade" ? (storageStatus?.periodDays ?? 30) : (leaseInfo?.periodDays ?? 30);
       const purchaseSummary =
         context.kind === "new" ? `New mailbox slot for ${context.agentActor} — $${invoice.priceUsd}, ${days}-day lease`
-        : context.kind === "storage-upgrade" ? `Sigil Mail Pro for ${context.mailboxActor} — $${invoice.priceUsd}, ${days} days`
+        : context.kind === "storage-upgrade" ? `Mail Sigil Pro for ${context.mailboxActor} — $${invoice.priceUsd}, ${days} days`
         : (() => {
             const n = invoice.leaseIds?.length;
             return n ? `Renewing ${n} slot${n > 1 ? "s" : ""} — $${invoice.priceUsd}, ${days} more days each` : `Renewing your slots — $${invoice.priceUsd}, ${days} more days`;
@@ -1326,7 +1323,7 @@ export default function GrantsContent() {
                         </div>
                         {isAclShare && (
                           <p className="text-[11px] text-muted-foreground">
-                            Uses your own Sigil Mail login — no separate password. {g.scope === "read" ? "Read-only." : "You can also send as this mailbox below."}
+                            Uses your own Mail Sigil login — no separate password. {g.scope === "read" ? "Read-only." : "You can also send as this mailbox below."}
                           </p>
                         )}
                         {g.scope === "send" && (
@@ -1931,7 +1928,7 @@ export default function GrantsContent() {
                             {isClaiming ? (<><Loader2 className="w-3 h-3 animate-spin mr-1" />Provisioning…</>) : "Claim"}
                           </Button>
                         ) : atHardCap ? (
-                          <span className="text-xs text-muted-foreground shrink-0" title={`Sigil Mail supports a maximum of ${quota?.agentMailboxes.max} agent mailboxes per account`}>
+                          <span className="text-xs text-muted-foreground shrink-0" title={`Mail Sigil supports a maximum of ${quota?.agentMailboxes.max} agent mailboxes per account`}>
                             {quota?.agentMailboxes.max} slot max reached
                           </span>
                         ) : (

@@ -49,7 +49,7 @@ export function InlineAppView({ apps, activeAppId, onClose, className }: InlineA
             // localStorage/DOM. No allow-popups-to-escape-sandbox either:
             // a popup opened from inside an inline app must stay just as
             // sandboxed as the app itself, so it can't run a fully
-            // unrestricted phishing tab next to the real Sigil Mail chrome.
+            // unrestricted phishing tab next to the real Mail Sigil chrome.
             sandbox="allow-scripts allow-forms allow-popups"
             referrerPolicy="no-referrer"
             loading="lazy"
