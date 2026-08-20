@@ -1636,13 +1636,21 @@ export default function LoginPage() {
                       </div>
                     )}
                   </Button>
-                  {/* NOTE (parked 2026-07-23, Gabriel): a "Use a different
-                      wallet account" link lived here — it called
-                      handleXprLogin(selectedNetwork, true) to force a fresh
-                      connect (bypassing silent restore) so someone could switch
-                      XPR accounts. Removed for now to keep the login clean; the
-                      forceFresh path in handleXprLogin is still wired, so
-                      restoring the link later is a one-line JSX add. */}
+                  {/* Un-parked 2026-08-19. Logout no longer purges the SDK
+                      wallet pairing (see performFullLogout), so the next
+                      sign-in silently restores the LAST wallet — which is the
+                      point: one signature instead of connect + sign. That
+                      makes this the only way to reach a different XPR account,
+                      so the link is load-bearing now rather than cosmetic.
+                      forceFresh=true purges the pairing then connects fresh. */}
+                  <button
+                    type="button"
+                    onClick={() => handleXprLogin(selectedNetwork, true)}
+                    disabled={xprLoading}
+                    className="w-full text-xs text-muted-foreground hover:text-foreground underline underline-offset-4 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Use a different wallet account
+                  </button>
                   {xprError && (
                     <div className="p-3 rounded-xl border border-destructive/20 bg-destructive/5 flex items-start gap-3">
                       <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0" />

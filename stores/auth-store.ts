@@ -14,7 +14,6 @@ import { fetchConfig } from '@/hooks/use-config';
 import { debug } from '@/lib/debug';
 import { generateAccountId, getAccountScopedKey } from '@/lib/account-utils';
 import { clearSessionNetwork } from '@/lib/xpr-network';
-import { purgeProtonSdkStorage } from '@/lib/proton-session';
 import { replaceWindowLocation, getPathPrefix, getLocaleFromPath, apiFetch } from '@/lib/browser-navigation';
 import { notifyParent } from '@/lib/iframe-bridge';
 import { snapshotAccount, restoreAccount, clearAllStores, evictAccount, evictAll } from '@/lib/account-state-manager';
@@ -371,13 +370,24 @@ function performFullLogout(set: (state: Partial<AuthState>) => void): void {
   // convenience-vs-security tradeoff — see BLUEPRINT-continue-as-login.md
   // to revive it).
   sweepSigilSessions();
-  // …and the WALLET session the SDK itself persists. Without this the rule
-  // above was only half-true: the login page's silent restore would pick the
-  // old Proton session back up, so signing out and back in skipped the wallet
-  // picker entirely and pushed a signature request at the user unprompted
-  // (Gabriel 2026-07-28: "i log out and try logging in and it pushes a
-  // transaction nonce"). An explicit logout means a clean slate.
-  purgeProtonSdkStorage();
+  // The SDK's own WALLET PAIRING (proton-storage* / proton-link*) is
+  // deliberately KEPT. This used to be purged here, and that is what made a
+  // post-logout sign-in cost TWO wallet approvals again (connect + sign) —
+  // undoing the restore-first work from 2026-07-23 ("its still 2 transactions
+  // to sign in"). The two credentials are not the same thing:
+  //   sigil_auth_token::<id> — a bearer token. Grants access on its own, so
+  //     sweepSigilSessions() above MUST clear it. That is the security gate.
+  //   proton-storage* / proton-link* — the wallet PAIRING. It only lets the
+  //     app ASK the wallet to sign; the wallet still has to approve (passkey
+  //     /biometric on WebAuth). Asking is not authorising, so keeping it
+  //     costs nothing: session creation still requires a fresh signature and
+  //     the signature-gated rule above holds exactly as written.
+  // The 2026-07-28 complaint ("i log out and try logging in and it pushes a
+  // transaction nonce") was about being ambushed by a prompt, not about the
+  // pairing itself — the user now presses "Sign in with XPR Wallet" first, so
+  // the signature is the thing they just asked for. Switching accounts is the
+  // explicit "Use a different wallet account" link (handleXprLogin forceFresh),
+  // restored on the login page — that path still calls purgeProtonSdkStorage().
   // Drop the session-global network selection — the next login re-picks it
   // (Sign in · Mainnet/Testnet). See lib/xpr-network.ts.
   clearSessionNetwork();
